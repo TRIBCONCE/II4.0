@@ -1,0 +1,62 @@
+
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (StreamReader sr = new StreamReader(response.GetResponseStream())) {
+                string responseXml = sr.ReadToEnd();
+                
+                int startIdx = responseXml.IndexOf("<t:MimeContent");
+                if (startIdx != -1) {
+                    startIdx = responseXml.IndexOf(">", startIdx) + 1;
+                    int endIdx = responseXml.IndexOf("</t:MimeContent>");
+                    if (endIdx != -1) {
+                        base64Eml = responseXml.Substring(startIdx, endIdx - startIdx).Trim();
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(base64Eml)) {
+                throw new Exception("Exchange не вернул MimeContent письмо.");
+            }
+
+            byte[] emlBytes = Convert.FromBase64String(base64Eml);
+
+            // 2. Отправка итогового сформированного письма в Департамент ИБ
+            using (MailMessage mail = new MailMessage()) {
+                mail.From = new MailAddress("fishkey-report@akbars.ru");
+                mail.To.Add("shabalinla@akbars.ru");
+                mail.Subject = "ФИШИНГ: " + subject;
+                mail.Body = "Сотрудник " + reporter + " сообщил о потенциальном фишинге.\nОригинал письма со всеми служебными заголовками прикреплен ниже.";
+                
+                using (MemoryStream ms = new MemoryStream(emlBytes)) {
+                    mail.Attachments.Add(new Attachment(ms, "phishing_original.eml", "message/rfc822"));
+                    
+                    using (SmtpClient smtp = new SmtpClient(" p-ln-smtp.abb-win.akbars.ru")) { 
+                        smtp.Port = 25; 
+                        smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
+                        smtp.Send(mail);
+                    }
+                }
+            }
+
+            context.Response.StatusCode = 200;
+            context.Response.Write("{\"status\":\"success\"}");
+        }
+        catch (Exception ex) {
+            try {
+                string logPath = context.Server.MapPath("~/ews_error.log");
+                File.AppendAllText(logPath, DateTime.Now.ToString() + " -> " + ex.ToString() + "\n\n");
+            } catch {}
+
+            context.Response.StatusCode = 500;
+            context.Response.Write("{\"error\":\"" + ex.Message.Replace("\"", "\\\"") + "\"}");
+        }
+    }
+
+    public bool IsReusable { get { return false; } }
+}
+У меня вылезает вот такая ошибка
+21.05.2026 9:40:48 -> System.Net.WebException: The remote server returned an error: (500) Internal Server Error.
+   at System.Net.HttpWebRequest.GetResponse()
+   at ReportHandler.ProcessRequest(HttpContext context) in c:\inetpub\wwwroot\fishing-addin\report.ashx:line 100
+а на сайте выдаёт вот так - Ошибка сервера ИБ (HTTP 500).
+Ответ сервера: {"error":"The remote server returned an error: (500) Internal Server Error."}
+Подствети в чём может быть проблемы куда копать и что делать? 
