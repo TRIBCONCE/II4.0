@@ -1,0 +1,99 @@
+Смотри вот код report.ashx честно говоря плохо понимаю что он делает для сайта но всёже вот он - 
+<%@ WebHandler Language="C#" Class="ReportHandler" %>
+<%@ Assembly Name="System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=заменил в целях безопасности" %>
+
+using System;
+using System.Web;
+using System.IO;
+using System.Net;
+using System.Net.Mail;
+using System.Text;
+using System.Collections.Generic;
+using System.Web.Script.Serialization;
+
+public class ReportHandler : IHttpHandler {
+    public void ProcessRequest (HttpContext context) {
+        context.Response.AddHeader("Access-Control-Allow-Origin", "*");
+        context.Response.AddHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+        context.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type");
+        
+        if (context.Request.HttpMethod == "OPTIONS") {
+            context.Response.StatusCode = 200;
+            return;
+        }
+
+        context.Response.ContentType = "application/json";
+        
+        try {
+            string json;
+            using (var reader = new StreamReader(context.Request.InputStream)) {
+                json = reader.ReadToEnd();
+            }
+
+            if (string.IsNullOrEmpty(json)) {
+                throw new Exception("Входящий JSON-пакет пуст.");
+            }
+
+            var serializer = new JavaScriptSerializer();
+            var data = serializer.Deserialize<Dictionary<string, object>>(json);
+            
+            string itemId = null;
+            if (data.ContainsKey("itemId") && data["itemId"] != null) {
+                itemId = data["itemId"].ToString();
+            }
+
+            string subject = "Без темы";
+            if (data.ContainsKey("subject") && data["subject"] != null) {
+                subject = data["subject"].ToString();
+            }
+
+            string reporter = "unknown";
+            if (data.ContainsKey("reporter") && data["reporter"] != null) {
+                reporter = data["reporter"].ToString();
+            }
+
+            if (string.IsNullOrEmpty(itemId)) {
+                throw new Exception("Критический параметр itemId отсутствует в запросе.");
+            }
+
+            // 1. SOAP-запрос к локальному Exchange без использования проблемного userToken
+              string ewsUrl = "https://ews.akbars.ru/ews/exchange.asmx"; 
+            
+            // Чистый SOAP XML GetItem без блоков wsse:Security
+            string getMimeSoap = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:soap=""http://xmlsoap.org"" 
+xmlns:t=""http://microsoft.com"" 
+xmlns:m=""http://microsoft.com"">
+<soap:Header>
+    <t:RequestServerVersion Version=""Exchange2013"" />
+</soap:Header>
+<soap:Body>
+    <m:GetItem>
+        <m:ItemShape>
+            <t:BaseShape>IdOnly</t:BaseShape>
+            <t:IncludeMimeContent>true</t:IncludeMimeContent>
+        </m:ItemShape>
+        <m:ItemIds>
+            <t:ItemId Id=""" + itemId + @""" />
+        </m:ItemIds>
+    </m:GetItem>
+</soap:Body>
+</soap:Envelope>";
+
+            string base64Eml = "";
+            
+            ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(ewsUrl);
+            request.Method = "POST";
+            request.ContentType = "text/xml; charset=utf-8";
+            
+            // ИСПРАВЛЕНО: Никаких паролей в коде. Сервер использует учетную запись пула IIS
+            request.Credentials = CredentialCache.DefaultCredentials; 
+
+            byte[] soapBytes = Encoding.UTF8.GetBytes(getMimeSoap);
+            request.ContentLength = soapBytes.Length;
+            using (Stream os = request.GetRequestStream()) {
+                os.Write(soapBytes, 0, soapBytes.Length);
+            }
