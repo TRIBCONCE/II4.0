@@ -1,0 +1,11 @@
+{
+    "errorId": "69b9628c-9b80-49d9-bda8-462fa4f8211c",
+    "errorType": "NotFound",
+    "errorSubType": "UserNotFound",
+    "errorCode": null,
+    "errorMessage": "Пользователь не найден",
+    "errorDetails": null,
+    "exception": null
+}
+смотри выводит такую ошибку кодгда я пытаюсь удалить встречу с помощью запроса DELETE https://abb.ktalk.ru/api/EmailCalendar/потом воожу email организатора/потом id встречи
+Организатор давно уволился и через запросы его не найти, но при этом когда я отыскиваю встречу данные уволенного организатора имеются, как быть? 
