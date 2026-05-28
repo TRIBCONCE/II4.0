@@ -9,3 +9,18 @@
 }
 смотри выводит такую ошибку кодгда я пытаюсь удалить встречу с помощью запроса DELETE https://abb.ktalk.ru/api/EmailCalendar/потом воожу email организатора/потом id встречи
 Организатор давно уволился и через запросы его не найти, но при этом когда я отыскиваю встречу данные уволенного организатора имеются, как быть? 
+"calendarSource": "ews",
+            "busyType": "busy",
+            "subject": "Оперативка _ ООПКК",
+            "description": "замазал",
+            "start": "2026-05-28T08:30:00Z",
+            "end": "2026-05-28T09:00:00Z",
+            "location": "толк",
+            "locationAttendee": null,
+            "organizer": {
+                "user": null,
+                "name": "замазал",
+                "mailbox": "замазал",
+                "type": "user",
+                "status": "unknown"
+            },
