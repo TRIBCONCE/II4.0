@@ -1,99 +1,43 @@
-Смотри вот код report.ashx честно говоря плохо понимаю что он делает для сайта но всёже вот он - 
-<%@ WebHandler Language="C#" Class="ReportHandler" %>
-<%@ Assembly Name="System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=заменил в целях безопасности" %>
 
-using System;
-using System.Web;
-using System.IO;
-using System.Net;
-using System.Net.Mail;
-using System.Text;
-using System.Collections.Generic;
-using System.Web.Script.Serialization;
+ошибка 401 Unauthorized
+{
+    "reason": "invalid_signature",
+    "status": "error",
+    "errors": [],
+    "error_data": {}
+}
+Пытался выполнить вот такой запрос 
+Получение токена
+Параметры запроса:
 
-public class ReportHandler : IHttpHandler {
-    public void ProcessRequest (HttpContext context) {
-        context.Response.AddHeader("Access-Control-Allow-Origin", "*");
-        context.Response.AddHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-        context.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type");
-        
-        if (context.Request.HttpMethod == "OPTIONS") {
-            context.Response.StatusCode = 200;
-            return;
-        }
+bot_id [UUID] - идентификатор чат-бота, необходим для шифрования данных
+signature [String] - bot_id, подписанный секретным ключом чат-бота (secret_key) с использованием hmac-sha256, представленный в виде base16 (hex) строки (используя традиционный rfc4648 алфавит 0-9 A-F).
+Пример подписи на Erlang:
 
-        context.Response.ContentType = "application/json";
-        
-        try {
-            string json;
-            using (var reader = new StreamReader(context.Request.InputStream)) {
-                json = reader.ReadToEnd();
-            }
 
-            if (string.IsNullOrEmpty(json)) {
-                throw new Exception("Входящий JSON-пакет пуст.");
-            }
+:crypto.mac(:hmac, :sha256, "secret", "bot_id") |> Base.encode16
 
-            var serializer = new JavaScriptSerializer();
-            var data = serializer.Deserialize<Dictionary<string, object>>(json);
-            
-            string itemId = null;
-            if (data.ContainsKey("itemId") && data["itemId"] != null) {
-                itemId = data["itemId"].ToString();
-            }
+"904E39D3BC549C71F4A4BDA66AFCDA6FC90D471A64889B45CC8D2288E56526AD"
+Пример подписи на Python:
 
-            string subject = "Без темы";
-            if (data.ContainsKey("subject") && data["subject"] != null) {
-                subject = data["subject"].ToString();
-            }
 
-            string reporter = "unknown";
-            if (data.ContainsKey("reporter") && data["reporter"] != null) {
-                reporter = data["reporter"].ToString();
-            }
+import hmac
+import hashlib
 
-            if (string.IsNullOrEmpty(itemId)) {
-                throw new Exception("Критический параметр itemId отсутствует в запросе.");
-            }
+key = b"secret"
+message = b"bot_id"
 
-            // 1. SOAP-запрос к локальному Exchange без использования проблемного userToken
-              string ewsUrl = "https://ews.akbars.ru/ews/exchange.asmx"; 
-            
-            // Чистый SOAP XML GetItem без блоков wsse:Security
-            string getMimeSoap = @"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://xmlsoap.org"" 
-xmlns:t=""http://microsoft.com"" 
-xmlns:m=""http://microsoft.com"">
-<soap:Header>
-    <t:RequestServerVersion Version=""Exchange2013"" />
-</soap:Header>
-<soap:Body>
-    <m:GetItem>
-        <m:ItemShape>
-            <t:BaseShape>IdOnly</t:BaseShape>
-            <t:IncludeMimeContent>true</t:IncludeMimeContent>
-        </m:ItemShape>
-        <m:ItemIds>
-            <t:ItemId Id=""" + itemId + @""" />
-        </m:ItemIds>
-    </m:GetItem>
-</soap:Body>
-</soap:Envelope>";
+hmac_result = hmac.new(key, message, hashlib.sha256).hexdigest()
+hmac_result_upper = hmac_result.upper()
+print(hmac_result_upper)
+Пример запроса:
 
-            string base64Eml = "";
-            
-            ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(ewsUrl);
-            request.Method = "POST";
-            request.ContentType = "text/xml; charset=utf-8";
-            
-            // ИСПРАВЛЕНО: Никаких паролей в коде. Сервер использует учетную запись пула IIS
-            request.Credentials = CredentialCache.DefaultCredentials; 
+/api/v2/botx/bots/8dada2c8-67a6-4434-9dec-570d244e78ee/token?signature=904E39D3BC549C71F4A4BDA66AFCDA6FC90D471A64889B45CC8D2288E56526AD
+Пример ответа:
 
-            byte[] soapBytes = Encoding.UTF8.GetBytes(getMimeSoap);
-            request.ContentLength = soapBytes.Length;
-            using (Stream os = request.GetRequestStream()) {
-                os.Write(soapBytes, 0, soapBytes.Length);
-            }
+
+  {
+    "status": "ok",
+    "result": "<token>"
+  }
