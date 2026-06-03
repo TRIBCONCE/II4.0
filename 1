@@ -1,4 +1,11 @@
-
+Select-Object : Property "ID" cannot be found.
+At line:16 char:56
++ ... mport-Csv -Path $FileExistingUsers | Select-Object -ExpandProperty ID
++                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (@{a9562a41-99ea...e-e2194b17da93}:PSObject 
+   ) [Select-Object], PSArgumentException
+    + FullyQualifiedErrorId : ExpandPropertyNotFound,Microsoft.PowerShell.Commands.SelectO 
+   bjectCommand
 // Впишите сюда ваши реальные данные
 const bot_id = "8dada2c8-67a6-4434-9dec-570d244e78ee";
 const secret_key = "ВАШ_СЕКРЕТНЫЙ_КЛЮЧ";
