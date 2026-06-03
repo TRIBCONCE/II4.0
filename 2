@@ -1,5 +1,33 @@
 
-  {
+  # Пути к файлам
+$firstCsvPath = "first.csv"
+$secondCsvPath = "second.csv"
+$outputJsonPath = "output.txt"
+
+# Читаем ID из первого CSV файла (предполагаем, что ID в первом столбце)
+$firstIds = Import-Csv -Path $firstCsvPath | ForEach-Object { $_.PSObject.Properties.Value[0] }
+
+# Читаем ID из второго CSV файла
+$secondIds = Import-Csv -Path $secondCsvPath | ForEach-Object { $_.PSObject.Properties.Value[0] }
+
+# Находим ID из первого файла, которых нет во втором
+$uniqueIds = $firstIds | Where-Object { $_ -notin $secondIds }
+
+# Формируем JSON структуру
+$jsonObject = @{
+    group_chat_id = "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    user_huids = [array]$uniqueIds
+}
+
+# Конвертируем в JSON и сохраняем в txt файл
+$jsonObject | ConvertTo-Json -Depth 10 | Out-File -FilePath $outputJsonPath -Encoding UTF8
+
+Write-Host "Готово! Найдено уникальных ID: $($uniqueIds.Count)" -ForegroundColor Green
+Write-Host "Результат сохранен в: $outputJsonPath" -ForegroundColor Green
+
+
+
+{
     "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
     "user_huids": ["a465f0f3-1354-491c-8f11-f400164295cb"]
   }
