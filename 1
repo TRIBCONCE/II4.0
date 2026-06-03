@@ -1,3 +1,14 @@
+
+// Впишите сюда ваши реальные данные
+const bot_id = "8dada2c8-67a6-4434-9dec-570d244e78ee";
+const secret_key = "ВАШ_СЕКРЕТНЫЙ_КЛЮЧ";
+
+// Postman использует встроенную библиотеку CryptoJS для шифрования
+const signature = CryptoJS.HmacSHA256(bot_id, secret_key).toString(CryptoJS.enc.Hex).toUpperCase();
+
+// Сохраняем переменные, чтобы Postman подставил их в URL
+pm.variables.set("bot_id", bot_id);
+pm.variables.set("signature", signature);
 Свойства бота
 Доступные боту типы сообщений	commands
 Кому разрешен доступ к боту	corporate
