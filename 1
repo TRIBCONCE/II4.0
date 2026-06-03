@@ -1,3 +1,68 @@
+# ==========================================
+# 1. Настройка переменных
+# ==========================================
+$GroupChatId = "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+
+$FileAllUsers = "C:\path\to\all_users.txt"
+$FileExistingUsers = "C:\path\to\existing_users.txt"
+$OutputFile = "C:\path\to\request_payload.txt"
+
+# ==========================================
+# 2. Чтение данных
+# ==========================================
+$AllUsers = Get-Content -Path $FileAllUsers | 
+    Where-Object { ![string]::IsNullOrWhiteSpace($_) } | 
+    ForEach-Object { $_.Trim() }
+
+$ExistingUsers = Get-Content -Path $FileExistingUsers | 
+    Where-Object { ![string]::IsNullOrWhiteSpace($_) } | 
+    ForEach-Object { $_.Trim() }
+
+# ==========================================
+# 3. Сравнение списков
+# ==========================================
+$UsersToAdd = $AllUsers | Where-Object { $_ -notin $ExistingUsers }
+
+if ($null -eq $UsersToAdd -or $UsersToAdd.Count -eq 0) {
+    Write-Host "Все пользователи уже есть в чате." -ForegroundColor Yellow
+    exit
+}
+
+Write-Host "Найдено новых пользователей для добавления: $($UsersToAdd.Count)" -ForegroundColor Green
+
+# ==========================================
+# 4. РУЧНАЯ СБОРКА ИДЕАЛЬНОГО JSON
+# ==========================================
+
+# Оборачиваем каждый ID в кавычки и добавляем 4 пробела отступа слева
+$FormattedIds = $UsersToAdd | ForEach-Object { "    `"$_`"" }
+
+# Склеиваем все ID через запятую и перенос строки
+$IdsJoined = $FormattedIds -join ",`n"
+
+# Собираем финальный текст (форматирование внутри @""@ сохраняется символ в символ)
+$JsonOutput = @"
+{
+  "group_chat_id": "$GroupChatId",
+  "user_huids": [
+$IdsJoined
+  ]
+}
+"@
+
+# ==========================================
+# 5. Сохранение файла (без маркера BOM, чтобы API точно не ругался)
+# ==========================================
+# Используем .NET класс для записи чистого UTF-8 без невидимых символов в начале файла
+[System.IO.File]::WriteAllText($OutputFile, $JsonOutput, [System.Text.Encoding]::UTF8)
+
+Write-Host "Файл успешно сохранен: $OutputFile" -ForegroundColor Green
+
+
+
+
+
+
 
 # ==========================================
 # 1. Настройка переменных
