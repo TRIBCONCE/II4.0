@@ -3,6 +3,63 @@
 # ==========================================
 $GroupChatId = "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
 
+# Путь к вашему единственному файлу со списком
+$InputFile = "C:\path\to\users.txt"
+$OutputFile = "C:\path\to\request_payload.txt"
+
+# ==========================================
+# 2. Чтение данных
+# ==========================================
+# Читаем файл, пропускаем пустые строки, обрезаем случайные пробелы по краям
+$UsersToAdd = Get-Content -Path $InputFile | 
+    Where-Object { ![string]::IsNullOrWhiteSpace($_) } | 
+    ForEach-Object { $_.Trim() }
+
+# Проверка, не пустой ли файл
+if ($null -eq $UsersToAdd -or $UsersToAdd.Count -eq 0) {
+    Write-Host "Файл со списком пользователей пуст. JSON не сформирован." -ForegroundColor Yellow
+    exit
+}
+
+Write-Host "Пользователей для записи в JSON: $($UsersToAdd.Count)" -ForegroundColor Green
+
+# ==========================================
+# 3. РУЧНАЯ СБОРКА ИДЕАЛЬНОГО JSON
+# ==========================================
+
+# Оборачиваем каждый ID в кавычки и добавляем 4 пробела отступа слева
+$FormattedIds = $UsersToAdd | ForEach-Object { "    `"$_`"" }
+
+# Склеиваем все ID через запятую и перенос строки
+$IdsJoined = $FormattedIds -join ",`n"
+
+# Собираем финальный текст (форматирование внутри @""@ сохраняется символ в символ)
+$JsonOutput = @"
+{
+  "group_chat_id": "$GroupChatId",
+  "user_huids": [
+$IdsJoined
+  ]
+}
+"@
+
+# ==========================================
+# 4. Сохранение файла (строго в UTF-8 без BOM)
+# ==========================================
+[System.IO.File]::WriteAllText($OutputFile, $JsonOutput, [System.Text.Encoding]::UTF8)
+
+Write-Host "Файл успешно сохранен: $OutputFile" -ForegroundColor Green
+
+
+
+
+
+
+# ==========================================
+# 1. Настройка переменных
+# ==========================================
+$GroupChatId = "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+
 # Пути к файлам TXT (укажите свои пути)
 $FileAllUsers = "C:\path\to\all_users.txt"
 $FileExistingUsers = "C:\path\to\existing_users.txt"
