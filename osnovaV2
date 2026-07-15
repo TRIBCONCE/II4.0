@@ -1,1 +1,79 @@
+# src/main.py
 
+from fastapi import FastAPI
+
+from bot import create_bot
+from config import settings
+# Убрали импорт GameState, так как он больше не нужен
+from routers.botx import router as botx_router
+from routers.health import router as health_router
+
+LOG = settings.logger
+
+# ── Создание бота и приложения ──
+bot = create_bot()
+app = FastAPI(docs_url="/swagger")
+
+
+# ── Lifecycle ──
+async def on_startup() -> None:
+    LOG.info("[startup] Тестовый бот запускается...")
+    await bot.startup()
+    LOG.info("[startup] Готово. Ожидаю команды.")
+
+
+async def on_shutdown() -> None:
+    LOG.info("[shutdown] Остановка бота...")
+    await bot.shutdown()
+    LOG.info("[shutdown] Бот остановлен.")
+
+
+app.add_event_handler("startup", on_startup)
+app.add_event_handler("shutdown", on_shutdown)
+
+# Сохраняем бота в state приложения, чтобы роутеры могли к нему обращаться
+app.state.bot = bot
+
+app.include_router(health_router)
+app.include_router(botx_router)
+
+
+# src/handlers/testhandlers.py
+
+from pybotx import Bot, HandlerCollector, Message
+from pybotx.keyboard import Button, Keyboard
+
+# Создаем коллектор обработчиков
+collector = HandlerCollector()
+
+@collector.command("/start", description="Запуск бота")
+async def start_handler(message: Message, bot: Bot) -> None:
+    """Обработчик команды /start. Отправляет кнопку пользователю."""
+    
+    # Создаем клавиатуру с одной кнопкой
+    keyboard = Keyboard()
+    keyboard.add_button(
+        Button(
+            command="/say_hello", 
+            text="Нажми меня"
+        )
+    )
+    
+    # Отправляем сообщение с клавиатурой
+    await bot.answer_message(
+        body="Привет! Нажми на кнопку ниже:",
+        keyboard=keyboard,
+    )
+
+@collector.command("/say_hello", visible=False)
+async def say_hello_handler(message: Message, bot: Bot) -> None:
+    """Обработчик нажатия на кнопку. visible=False скрывает команду из меню бота."""
+    
+    # При нажатии на кнопку присылаем текст "Привет"
+    await bot.answer_message(body="Привет")
+
+# Если нужно, чтобы бот реагировал на любой текст (не только команды), 
+# можно добавить дефолтный обработчик:
+@collector.default
+async def default_handler(message: Message, bot: Bot) -> None:
+    await bot.answer_message(body="Я понимаю только команду /start. Введи её, чтобы появилась кнопка!")
