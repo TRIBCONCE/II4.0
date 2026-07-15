@@ -1,0 +1,121 @@
+И так смотри я сейчас создаю нового бота я тебе сейчас пришлю пример бота который у меня есть 
+вот функция main:
+# src/main.py
+
+from fastapi import FastAPI
+
+from bot import create_bot
+from config import settings
+from game_state import GameState
+from routers.botx import router as botx_router
+from routers.health import router as health_router
+
+LOG = settings.logger
+
+# ── Создание бота и приложения ──
+bot = create_bot()
+app = FastAPI(docs_url="/swagger")
+
+
+# ── Lifecycle ──
+async def on_startup() -> None:
+    LOG.info("[startup] Бот «Что? Где? Когда?» запускается...")
+    await bot.startup()
+    bot.state.game = GameState()
+    LOG.info("[startup] Готово. Ожидаю команды.")
+
+
+async def on_shutdown() -> None:
+    LOG.info("[shutdown] Остановка бота...")
+    game: GameState = bot.state.game
+    if game.timer_task and not game.timer_task.done():
+        game.timer_task.cancel()
+    await bot.shutdown()
+    LOG.info("[shutdown] Бот остановлен.")
+
+
+app.add_event_handler("startup", on_startup)
+app.add_event_handler("shutdown", on_shutdown)
+
+app.state.bot = bot
+
+app.include_router(health_router)
+app.include_router(botx_router)
+
+вот bot.py
+# src/bot.py
+
+from uuid import UUID
+
+import httpx
+from pybotx import Bot, BotAccountWithSecret, HandlerCollector
+
+from config import settings
+from handlers import game
+
+
+def create_bot() -> Bot:
+    """Фабрика: создаёт и конфигурирует экземпляр бота."""
+
+    main_collector = HandlerCollector()
+    main_collector.include(game.collector)
+
+    timeouts = httpx.Timeout(30.0, connect=5.0)
+    limits = httpx.Limits(
+        max_keepalive_connections=5,
+        max_connections=10,
+        keepalive_expiry=5,
+    )
+    httpx_client = httpx.AsyncClient(timeout=timeouts, limits=limits)
+
+    return Bot(
+        collectors=[main_collector],
+        bot_accounts=[
+            BotAccountWithSecret(
+                id=UUID(str(settings.express.uuid)),
+                cts_url=settings.express.cts_url,
+                secret_key=settings.express.secret_key,
+            ),
+        ],
+        httpx_client=httpx_client,
+    )
+Вот начало у game.py которая находится в handlers
+
+теперь мне вот мой уже bot.py
+# src/bot.py
+
+from uuid import UUID
+
+import httpx
+from pybotx import Bot, BotAccountWithSecret, HandlerCollector
+
+from config import settings
+from handlers import testhandlers
+
+
+def create_bot() -> Bot:
+    """Фабрика: создаёт и конфигурирует экземпляр бота."""
+
+    main_collector = HandlerCollector()
+    main_collector.include(testhandlers.collector)
+
+    timeouts = httpx.Timeout(30.0, connect=5.0)
+    limits = httpx.Limits(
+        max_keepalive_connections=5,
+        max_connections=10,
+        keepalive_expiry=5,
+    )
+    httpx_client = httpx.AsyncClient(timeout=timeouts, limits=limits)
+
+    return Bot(
+        collectors=[main_collector],
+        bot_accounts=[
+            BotAccountWithSecret(
+                id=UUID(str(settings.express.uuid)),
+                cts_url=settings.express.cts_url,
+                secret_key=settings.express.secret_key,
+            ),
+        ],
+        httpx_client=httpx_client,
+    )
+Напиши для моего бота main и testhandlers логика у бота очень простая должна быть одна кнопка по её нажатии присывается текст "Привет"
