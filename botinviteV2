@@ -1,48 +1,77 @@
-  File "pydantic/main.py", line 364, in pydantic.main.BaseModel.__init__
-pydantic.error_wrappers.ValidationError: 1 validation error for ExpressSettings
-cts_url
-  invalid or missing URL scheme (type=value_error.url.scheme)
+# src/routers/botx.py
+
+from fastapi import APIRouter, Request, status
+from fastapi.responses import JSONResponse
+from pybotx import (
+    Bot,
+    BotXMethodCallbackNotFoundError,
+    UnknownBotAccountError,
+    UnverifiedRequestError,
+    build_bot_disabled_response,
+    build_command_accepted_response,
+)
+
+from src.config import settings
+from src.routers.dependencies.bot_dependency import bot_dependency
+
+router = APIRouter()
+LOG = settings.logger
 
 
-# src/config.py
+@router.post("/command", include_in_schema=False)
+async def command_handler(request: Request, bot: Bot = bot_dependency) -> JSONResponse:
+    data = await request.json()
 
-import logging
-import sys
-from functools import lru_cache
-from uuid import UUID
+    sender = data.get("from", {})
+    cmd = data.get("command", {}).get("body", "")
+    LOG.info(f"COMMAND: user={sender.get('username','?')} cmd={cmd}")
 
-from pydantic import AnyHttpUrl, BaseSettings, Field
+    try:
+        bot.async_execute_raw_bot_command(data, request_headers=request.headers)
+    except (ValueError, UnknownBotAccountError, UnverifiedRequestError) as exc:
+        LOG.error(f"COMMAND_FAIL: {exc}")
+        return JSONResponse(
+            build_bot_disabled_response(str(exc)),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
-
-
-# ── Pydantic Settings ───────────────────────────────────────────
-class ExpressSettings(BaseSettings):
-    uuid: UUID = Field(..., env="EXPRESS_UUID")
-    cts_url: AnyHttpUrl = Field(..., env="EXPRESS_URL")
-    secret_key: str = Field(..., env="EXPRESS_SECRET_KEY")
-
-
-
-class Settings(BaseSettings):
-    express: ExpressSettings = Field(default_factory=ExpressSettings)
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        arbitrary_types_allowed = True
+    return JSONResponse(build_command_accepted_response(), status_code=status.HTTP_202_ACCEPTED)
 
 
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+@router.get("/status", include_in_schema=False)
+async def status_handler(request: Request, bot: Bot = bot_dependency) -> JSONResponse:
+    try:
+        result = await bot.raw_get_status(
+            dict(request.query_params), request_headers=request.headers
+        )
+    except UnknownBotAccountError as exc:
+        return JSONResponse(
+            build_bot_disabled_response(str(exc)),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return JSONResponse(result)
 
 
-settings = get_settings()
-EXPRESS_UUID=скрыл
-EXPRESS_URL=24.akbars.ru
-EXPRESS_SECRET_KEY=скрыл
+@router.post("/notification/callback", include_in_schema=False)
+async def callback_handler(request: Request, bot: Bot = bot_dependency) -> JSONResponse:
+    data = await request.json()
+    try:
+        await bot.set_raw_botx_method_result(
+            data, request_headers=request.headers, verify_request=False
+        )
+    except BotXMethodCallbackNotFoundError as exc:
+        return JSONResponse(
+            build_bot_disabled_response(str(exc)),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return JSONResponse(build_command_accepted_response(), status_code=status.HTTP_202_ACCEPTED)
 
-ADMIN_LOGIN=скрыл
+вот ошибка -   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/app/src/main.py", line 4, in <module>
+    from src.routers.botx import router as botx_router
+  File "/app/src/routers/botx.py", line 18, in <module>
+    LOG = settings.logger
+          ^^^^^^^^^^^^^^^
+AttributeError: 'Settings' object has no attribute 'logger'
 
-TIMER_DISCUSSION=60
-TIMER_ANSWER=10
+Закоментируй все строчки которыйе вызывают ошибки.
