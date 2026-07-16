@@ -2,3 +2,47 @@
 pydantic.error_wrappers.ValidationError: 1 validation error for ExpressSettings
 cts_url
   invalid or missing URL scheme (type=value_error.url.scheme)
+
+
+# src/config.py
+
+import logging
+import sys
+from functools import lru_cache
+from uuid import UUID
+
+from pydantic import AnyHttpUrl, BaseSettings, Field
+
+
+
+# ── Pydantic Settings ───────────────────────────────────────────
+class ExpressSettings(BaseSettings):
+    uuid: UUID = Field(..., env="EXPRESS_UUID")
+    cts_url: AnyHttpUrl = Field(..., env="EXPRESS_URL")
+    secret_key: str = Field(..., env="EXPRESS_SECRET_KEY")
+
+
+
+class Settings(BaseSettings):
+    express: ExpressSettings = Field(default_factory=ExpressSettings)
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        arbitrary_types_allowed = True
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
+EXPRESS_UUID=скрыл
+EXPRESS_URL=24.akbars.ru
+EXPRESS_SECRET_KEY=скрыл
+
+ADMIN_LOGIN=скрыл
+
+TIMER_DISCUSSION=60
+TIMER_ANSWER=10
