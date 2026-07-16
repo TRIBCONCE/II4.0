@@ -1,5 +1,448 @@
-  File "/app/src/bot.py", line 9, in <module>
     from handlers import testhandlers
-  File "/app/src/handlers/testhandlers.py", line 3, in <module>
-    from pybotx import Bot, HandlerCollector, Message
-ImportError: cannot import name 'Message' from 'pybotx' (/usr/local/lib/python3.12/site-packages/pybotx/__init__.py)
+  File "/app/src/handlers/testhandlers.py", line 4, in <module>
+    from pybotx.keyboard import Button, Keyboard, IncomingMessage
+ModuleNotFoundError: No module named 'pybotx.keyboard'
+вот такая ошибка 
+
+давай вот как смотри вот код рабочего бота для express 
+# src/handlers/game.py
+
+import asyncio
+import time
+from uuid import UUID
+
+from pybotx import (
+    Bot,
+    BubbleMarkup,
+    ChatTypes,
+    HandlerCollector,
+    IncomingMessage,
+)
+
+from config import settings
+from game_state import GameState
+
+collector = HandlerCollector()
+
+LOG = settings.logger
+ADMIN_LOGIN = settings.game.admin_login.lower()
+DISCUSSION_SEC = settings.game.timer_discussion   # 60
+ANSWER_SEC = settings.game.timer_answer            # 10
+TOTAL_SEC = DISCUSSION_SEC + ANSWER_SEC            # 70
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║                   ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ                    ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+def _game(bot: Bot) -> GameState:
+    """Короткий доступ к состоянию игры."""
+    return bot.state.game
+
+
+def _is_admin(message: IncomingMessage) -> bool:
+    login = message.sender.ad_login
+    return bool(login and login.lower() == ADMIN_LOGIN)
+
+
+def _bot_id(bot: Bot) -> UUID:
+    return UUID(str(settings.express.uuid))
+
+
+async def _send_to_all_players(bot: Bot, text: str) -> None:
+    """Отправляет сообщение каждому зарегистрированному участнику."""
+    game = _game(bot)
+    bot_id = _bot_id(bot)
+    for huid_str in game.registered_players:
+        try:
+            # Ищем личный чат с участником
+            chat_id = await _get_or_create_personal_chat(bot, bot_id, UUID(huid_str))
+            if chat_id:
+                await bot.send_message(bot_id=bot_id, chat_id=chat_id, body=text)
+        except Exception as e:
+            LOG.error(f"Не удалось отправить сообщение игроку {huid_str}: {e}")
+
+
+async def _get_or_create_personal_chat(bot: Bot, bot_id: UUID, user_huid: UUID) -> UUID | None:
+    """Находит или создаёт личный чат бота с пользователем."""
+    try:
+        chats = await bot.list_chats(bot_id=bot_id)
+        for chat in chats:
+            if chat.chat_type == ChatTypes.PERSONAL_CHAT and user_huid in chat.members:
+                return chat.chat_id
+        # Если чат не найден — создаём
+        chat_id = await bot.create_chat(
+            bot_id=bot_id,
+            name="Что? Где? Когда?",
+            chat_type=ChatTypes.PERSONAL_CHAT,
+            huids=[user_huid],
+        )
+        return chat_id
+    except Exception as e:
+        LOG.error(f"Ошибка при поиске/создании чата для {user_huid}: {e}")
+        return None
+
+
+async def _send_to_admin(bot: Bot, text: str) -> None:
+    """Отправляет сообщение админу в личку."""
+    bot_id = _bot_id(bot)
+    try:
+        admin_user = await bot.search_user_by_ad(
+            bot_id=bot_id,
+            ad_login=settings.game.admin_login,
+            ad_domain="abb-win",
+        )
+        chat_id = await _get_or_create_personal_chat(bot, bot_id, admin_user.huid)
+        if chat_id:
+            await bot.send_message(bot_id=bot_id, chat_id=chat_id, body=text)
+    except Exception as e:
+        LOG.error(f"Не удалось отправить сообщение админу: {e}")
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║                     ТАЙМЕР ВОПРОСА                           ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+async def _question_timer(bot: Bot, question_num: int) -> None:
+    """
+    Фоновая задача: рассылает таймерные уведомления участникам.
+    Расписание (от момента старта):
+        0 сек  — «Вопрос N. У вас есть 60 секунд на обсуждение»
+       30 сек  — «Осталось 30 секунд до конца обсуждения»
+       50 сек  — «Осталось 10 секунд до конца обсуждения»
+       60 сек  — «Время обсуждения истекло, у вас есть 10 секунд на отправку ответа»
+       70 сек  — «Время на отправку ответов закончилось!»
+    """
+    game = _game(bot)
+
+    try:
+        # 0 сек — старт
+        await _send_to_all_players(
+            bot,
+            f"❓ **Вопрос {question_num}.** У вас есть {DISCUSSION_SEC} секунд на обсуждение"
+        )
+        LOG.info(f"[timer] Вопрос {question_num} — отсчёт запущен")
+
+        # Ждём 30 сек
+        await asyncio.sleep(30)
+        await _send_to_all_players(bot, "⏳ Осталось 30 секунд до конца обсуждения")
+        LOG.info(f"[timer] Вопрос {question_num} — осталось 30 сек")
+
+        # Ждём ещё 20 сек (итого 50)
+        await asyncio.sleep(20)
+        await _send_to_all_players(bot, "⏳ Осталось 10 секунд до конца обсуждения")
+        LOG.info(f"[timer] Вопрос {question_num} — осталось 10 сек обсуждения")
+
+        # Ждём ещё 10 сек (итого 60)
+        await asyncio.sleep(10)
+        await _send_to_all_players(
+            bot,
+            f"⌛ Время обсуждения истекло, у вас есть {ANSWER_SEC} секунд на отправку ответа"
+        )
+        LOG.info(f"[timer] Вопрос {question_num} — обсуждение закончилось, {ANSWER_SEC} сек на ответ")
+
+        # Ждём ещё 10 сек (итого 70)
+        await asyncio.sleep(ANSWER_SEC)
+        await _send_to_all_players(bot, "🚫 Время на отправку ответов закончилось!")
+        LOG.info(f"[timer] Вопрос {question_num} — время вышло, получено ответов: {len(game.answers)}")
+
+        # Переводим состояние в IDLE
+        game.status = "IDLE"
+
+    except asyncio.CancelledError:
+        LOG.info(f"[timer] Таймер вопроса {question_num} отменён")
+        raise
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║                   КОМАНДЫ УЧАСТНИКОВ                         ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+@collector.command("/start", description="Присоединиться к игре")
+async def start_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Регистрирует участника в игре."""
+    game = _game(bot)
+    huid = str(message.sender.huid)
+    name = message.sender.username or message.sender.ad_login or "Неизвестный"
+
+    if huid in game.registered_players:
+        await bot.answer_message("Вы уже зарегистрированы в игре. Ожидайте начала вопроса.")
+        LOG.info(f"[start] Повторная регистрация: {name} ({huid})")
+        return
+
+    game.registered_players[huid] = name
+    await bot.answer_message(
+        "🎉 **Добро пожаловать на общебанковскую интеллектуальную игру!**\n\n"
+        "Ожидайте начала вопроса от ведущего."
+    )
+    LOG.info(f"[start] Зарегистрирован: {name} ({huid}), всего игроков: {len(game.registered_players)}")
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║                    КОМАНДЫ АДМИНА                            ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+@collector.command("/q", description="Запустить следующий вопрос", visible=False)
+async def question_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Админ запускает новый вопрос."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    game = _game(bot)
+
+    if game.status == "ACTIVE":
+        await bot.answer_message("⚠️ Вопрос уже идёт. Дождитесь окончания или используйте /stop.")
+        return
+
+    if not game.registered_players:
+        await bot.answer_message("⚠️ Нет зарегистрированных участников. Участники должны нажать /start.")
+        return
+
+    # Новый вопрос
+    game.question_number += 1
+    game.answers = {}
+    game.status = "ACTIVE"
+    game.question_started_at = time.time()
+
+    # Запускаем фоновый таймер
+    game.timer_task = asyncio.create_task(
+        _question_timer(bot, game.question_number)
+    )
+
+    await bot.answer_message(
+        f"✅ Вопрос **{game.question_number}** запущен.\n"
+        f"Участников: **{len(game.registered_players)}**\n"
+        f"Таймер: {TOTAL_SEC} сек ({DISCUSSION_SEC} обсуждение + {ANSWER_SEC} ответ)"
+    )
+    LOG.info(f"[q] Админ запустил вопрос {game.question_number}")
+
+
+@collector.command("/stop", description="Остановить текущий вопрос", visible=False)
+async def stop_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Админ принудительно останавливает текущий вопрос."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    game = _game(bot)
+
+    if game.status != "ACTIVE":
+        await bot.answer_message("ℹ️ Сейчас нет активного вопроса.")
+        return
+
+    # Отменяем таймер
+    if game.timer_task and not game.timer_task.done():
+        game.timer_task.cancel()
+
+    game.status = "IDLE"
+    await _send_to_all_players(bot, "⛔ Ведущий остановил текущий вопрос.")
+    await bot.answer_message(
+        f"⛔ Вопрос {game.question_number} остановлен.\n"
+        f"Получено ответов: **{len(game.answers)}**"
+    )
+    LOG.info(f"[stop] Админ остановил вопрос {game.question_number}")
+
+
+@collector.command("/answers", description="Показать ответы", visible=False)
+async def answers_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Админ смотрит собранные ответы на текущий/последний вопрос."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    game = _game(bot)
+
+    if game.question_number == 0:
+        await bot.answer_message("ℹ️ Ещё не было ни одного вопроса.")
+        return
+
+    if not game.answers:
+        await bot.answer_message(f"📋 **Вопрос {game.question_number}** — ответов пока нет.")
+        return
+
+    lines = [f"📋 **Ответы на вопрос {game.question_number}:**\n"]
+    for idx, (huid, answer) in enumerate(game.answers.items(), 1):
+        name = game.registered_players.get(huid, "Неизвестный")
+        lines.append(f"**{idx}.** {name}: «{answer}»")
+
+    await bot.answer_message("\n".join(lines))
+    LOG.info(f"[answers] Админ запросил ответы, вопрос {game.question_number}")
+
+
+@collector.command("/players", description="Список участников", visible=False)
+async def players_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Админ смотрит зарегистрированных игроков."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    game = _game(bot)
+
+    if not game.registered_players:
+        await bot.answer_message("ℹ️ Нет зарегистрированных участников.")
+        return
+
+    lines = [f"👥 **Зарегистрировано участников: {len(game.registered_players)}**\n"]
+    for idx, (huid, name) in enumerate(game.registered_players.items(), 1):
+        lines.append(f"{idx}. {name}")
+
+    await bot.answer_message("\n".join(lines))
+
+
+@collector.command("/reset", description="Сброс игры", visible=False)
+async def reset_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Админ полностью сбрасывает игру."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    game = _game(bot)
+
+    # Отменяем таймер если идёт
+    if game.timer_task and not game.timer_task.done():
+        game.timer_task.cancel()
+
+    player_count = len(game.registered_players)
+
+    # Сброс всех полей
+    game.status = "IDLE"
+    game.question_number = 0
+    game.question_started_at = 0.0
+    game.registered_players = {}
+    game.answers = {}
+    game.timer_task = None
+
+    await bot.answer_message(
+        f"🔄 Игра полностью сброшена.\n"
+        f"Было участников: {player_count}\n"
+        f"Участники должны заново нажать /start."
+    )
+    LOG.info(f"[reset] Админ сбросил игру")
+
+
+@collector.command("/help_admin", description="Справка ведущего", visible=False)
+async def help_admin_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Справка по командам ведущего."""
+    if not _is_admin(message):
+        await bot.answer_message("❌ Эта команда доступна только ведущему.")
+        return
+
+    await bot.answer_message(
+        "📖 **Команды ведущего:**\n\n"
+        "**/q** — запустить следующий вопрос (таймер + рассылка)\n"
+        "**/stop** — принудительно остановить текущий вопрос\n"
+        "**/answers** — показать ответы на текущий/последний вопрос\n"
+        "**/players** — список зарегистрированных участников\n"
+        "**/reset** — полный сброс игры (участники, вопросы, ответы)\n"
+        "**/help_admin** — эта справка"
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║              ОБРАБОТЧИК ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ             ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+@collector.default_message_handler
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    """
+    Обрабатывает любой текст, не являющийся командой.
+    Если идёт вопрос и время не вышло — принимает как ответ.
+    """
+    game = _game(bot)
+    huid = str(message.sender.huid)
+    name = message.sender.username or message.sender.ad_login or "Неизвестный"
+
+    # Админу можно писать что угодно — игнорируем
+    if _is_admin(message):
+        return
+
+    # Если пользователь не зарегистрирован — просим /start
+    if huid not in game.registered_players:
+        await bot.answer_message(
+            "Для участия в игре отправьте команду /start"
+        )
+        return
+
+    # ── Состояние IDLE ──
+    if game.status == "IDLE":
+        await bot.answer_message(
+            "Вы не можете сейчас отправлять сообщения. "
+            "Дождитесь сообщений администратора"
+        )
+        return
+
+    # ── Состояние ACTIVE ──
+    elapsed = time.time() - game.question_started_at
+
+    if elapsed > TOTAL_SEC:
+        # Опоздал
+        await bot.answer_message("🚫 Время на отправку ответов закончилось!")
+        return
+
+    # Уже отвечал на этот вопрос?
+    if huid in game.answers:
+        await bot.answer_message("ℹ️ Ваш ответ уже принят. Повторная отправка невозможна.")
+        return
+
+    # Принимаем ответ
+    answer_text = message.body.strip()
+    game.answers[huid] = answer_text
+
+    await bot.answer_message("✅ Ответ принят")
+    LOG.info(
+        f"[answer] Вопрос {game.question_number} — ответ от {name}: «{answer_text}» "
+        f"(через {elapsed:.1f} сек)"
+    )
+
+    # Пересылаем админу
+    await _send_to_admin(
+        bot,
+        f"📩 **Вопрос {game.question_number}** — {name} ответил:\n«{answer_text}»"
+    )
+
+Вот мой не рабочий код 
+# src/handlers/testhandlers.py
+
+from pybotx import Bot, HandlerCollector
+from pybotx.keyboard import Button, Keyboard, IncomingMessage
+
+# Создаем коллектор обработчиков
+collector = HandlerCollector()
+
+
+@collector.command("/start", description="Запуск бота")
+async def start_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Обработчик команды /start. Отправляет кнопку пользователю."""
+
+    # Создаем клавиатуру с одной кнопкой
+    keyboard = Keyboard()
+    keyboard.add_button(
+        Button(
+            command="/say_hello",
+            text="Нажми меня"
+        )
+    )
+
+    # Отправляем сообщение с клавиатурой
+    await bot.answer_message(
+        body="Привет! Нажми на кнопку ниже:",
+        keyboard=keyboard,
+    )
+
+
+@collector.command("/say_hello", visible=False)
+async def say_hello_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Обработчик нажатия на кнопку. visible=False скрывает команду из меню бота."""
+
+    # При нажатии на кнопку присылаем текст "Привет"
+    await bot.answer_message(body="Привет")
+
+
+# Если нужно, чтобы бот реагировал на любой текст (не только команды),
+# можно добавить дефолтный обработчик:
+@collector.default
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    await bot.answer_message(body="Я понимаю только команду /start. Введи её, чтобы появилась кнопка!")
+
+исправь так чтобы работало
