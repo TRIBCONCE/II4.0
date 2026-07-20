@@ -1,0 +1,3836 @@
+Общее описание
+Создание чат-бота
+Чат-бот создается в консоли администратора корпоративного сервера.
+Описание полей
+Параметр	Тип данных	Описание
+id	UUID	Уникальный идентификатор в системе BotX. Используется для идентификации в BotX и приложении чат-бота
+app_id	string	Уникальный текстовый идентификатор чат-бота
+url	string	Ссылка на API чат-бота
+name	string	Имя чат-бота
+description	string	Описание
+enabled	boolean	Включен/выключен чат-бот
+status_message	string	Статус-сообщение
+secret_key	string	Секретный ключ, генерируется в момент создания чат-бота
+proto_version	integer	Используемая версия протокола (BotX -> Bot)
+Пример чат-бота
+•	id: "dcfa5a7c-7cc4-4c89-b6c0-80325604f9a4"
+•	app_id: "trello"
+•	url: "https://bot.com/api/v1/botx_trello"
+•	name: "Trello Bot"
+•	description: "Бот для работы с Trello-досками"
+•	enabled: true
+•	status_message: "It works!"
+•	secret_key: "secret"
+•	proto_version: 4
+Редактирование чат-бота
+Отредактировать свойства чат-бота можно на его странице в консоли администратора.
+Доступные свойства
+Параметр	Тип данных	Описание
+allowed_data	all|commands|none
+(default: commands)	Типы данных, которые может принимать чат-бот:
+•	all - чат-бот принимает все сообщения, отправленные в чат;
+•	commands - чат-бот принимает сообщение, только если его упомянули/заменшили;
+•	none - чат-бот не принимает сообщений
+allow_chat_creating	true|false
+(default: false)	Позволить чат-боту создавать чаты
+show_in_catalog	true|false
+(default:true)	Отображать чат-бота в каталоге чат-ботов
+communication_availability	corporate|trust|local|all
+(default: corporate)	Тип пользователей, которые могут взаимодействовать с чат-ботом:
+•	corporate - корп. пользователь с любого CTS;
+•	trust - корп. пользователь с трастового CTS;
+•	local - корп. пользователь с локального CTS;
+•	all - любой пользователь (в том числе с RTS)
+use_botx_ca_cert	true|false
+(default: false)	Использовать SSL CA сертификат BotX при отправке запроса к чат-боту.
+
+Для использования BotX SSL CA сертификата необходимо загрузить его в панели администратора на странице настроек сервера (/settings/server).
+
+Должна быть загружена полная цепочка выдающих серверов, т. е. сертификат следующего вида:
+-----BEGIN CERTIFICATE-----
+Intermediate CA
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+Root CA
+-----END CERTIFICATE-----
+
+Для использования Botx SSL CA сертификата необходимо установить у чат-бота аттрибут “Версия протокола” в значение 3 или выше.
+
+После смены сертификата требуется перезагрузка контейнера.
+
+После отключения свойства (если чат-бот раннее использовал его) требуется перезагрузка контейнера.
+use_pds_token	true|false
+(default: false)	Если true, то при каждом обращение к чат-боту генерируется JWT-токен, который подписывается ПДС ключом. Полученный JWT-токен передается при каждой отправке команды/запроса чат-боту в HTTP-заголовке pds_token
+pds_key	string	Ключ, которым будет подписываться PDS JWT-токен. Ключ представляет из себя валидный Private RSA-ключ. Подпись выполняется с использованием RS256 алгоритма
+use_open_id_access_token	true|false
+(default: false)	Если true, то при обращение к чат-боту пользователем передается open_id токен пользователя в заголовке open_id_access_token
+Разработка чат-ботов
+Перед тем как приступить к разработке чат-бота, используя наши инструменты, ознакомьтесь со следующей документацией:
+1.	Что такое чат-боты и SmartApp
+2.	BotX API
+3.	Bot API v4
+4.	SDK pybotx и async-box (шаблон бота).
+5.	Пример простого бота на основе async-box - todo-bot.
+При разработке бота вам могут понадобиться виджеты (многие из них уже реализованы в библиотеке pybotx-widgets). Для удобной работы с состоянием пользователя используйте библиотеку pybotx-fsm.
+Библиотеки
+•	pybotx
+•	async-box
+•	pybotx-fsm
+•	pybotx-smartapp-rpc
+•	pybotx-smart-logger
+•	pybotx-smartapp-smart-logger
+•	smartapp-bridge
+•	smartapp-sdk
+Bots API
+Список методов
+Метод	URL	Описание
+GET	/api/v2/botx/bots/:bot_id/token	Получение токена
+
+GET	/api/v1/botx/bots/catalog?since=datatime	Получение списка ботов своего сервера
+
+Получение токена
+Параметры запроса:
+•	bot_id [UUID] - идентификатор чат-бота, необходим для шифрования данных
+•	signature [String] - bot_id, подписанный секретным ключом чат-бота (secret_key) с использованием hmac-sha256, представленный в виде base16 (hex) строки (используя традиционный rfc4648 алфавит 0-9 A-F).
+Пример подписи на Erlang:
+:crypto.mac(:hmac, :sha256, "secret", "bot_id") |> Base.encode16
+
+"904E39D3BC549C71F4A4BDA66AFCDA6FC90D471A64889B45CC8D2288E56526AD"
+
+Пример подписи на Python:
+import hmac
+import hashlib
+
+key = b"secret"
+message = b"bot_id"
+
+hmac_result = hmac.new(key, message, hashlib.sha256).hexdigest()
+hmac_result_upper = hmac_result.upper()
+print(hmac_result_upper)
+
+Пример запроса:
+/api/v2/botx/bots/8dada2c8-67a6-4434-9dec-570d244e78ee/token?signature=904E39D3BC549C71F4A4BDA66AFCDA6FC90D471A64889B45CC8D2288E56526AD
+
+Пример ответа:
+  {
+    "status": "ok",
+    "result": "<token>"
+  }
+
+Получение списка ботов своего сервера
+Параметры запроса:
+•	since [ISO-8601 timestamp] - минимально допустимое время последнего обновления бота в выборке
+Пример ответа:
+{
+  "result": {
+    "generated_at": <datetime>,
+    "bots": [
+      {
+        "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+        "name": "First bot",
+        "description": "My bot",
+        "avatar": "https://cts.ccsteam.ru/uploads/profile_avatar/796640bd-7add-5274-9f02-7bd169b88dab/04db7577-238c-5aec-8d21-22e831839c21.jpg?v=21"
+        "enabled": true,
+      }
+    ]
+  }
+}
+Notifications API
+Список методов
+Метод	URL	Описание
+POST	/api/v4/botx/notifications/direct	Отправка директ-нотификации в чат
+
+POST	/api/v4/botx/notifications/direct/sync	Отправка директ-нотификации в чат (синхронная версия)
+
+POST	/api/v4/botx/notifications/internal	Отправка внутренней бот-нотификации
+
+Отправка директ-нотификации v4
+Обрабатывается асинхронно.
+В ответ на запрос приходит sync_id [UUID] - идентификатор отправляемого сообщения.
+В случае успеха или провала отправки на коллбек чат-боту отправляется запрос с результатом отправки.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "multipart/form-data" (при отсутствии файла можно использовать "application/json")
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата в который придет сообщение
+•	recipients [Array[UUID]] (Default: null) - huid получателей события. По умолчанию все участники чата.
+•	notification [Object]
+•	status [String] - "ok" | "error". Служит идентификатором успешности или провала выполнения команды.
+•	body [String] - текстовое сообщение. Отображается в чате, как текстовое сообщение. Лимит 4096 символов.
+•	metadata [Object] (Default: {}) - метаданные, которые будут отправлены в параметрах команды при нажатие на любую кнопку.
+•	opts [Object] (Default: {}) - опции сообщения
+•	silent_response [Boolean] (Default: false) - если значение true, то последующие сообщения пользователя не будут отображаться в чате, до тех пор пока не придет сообщения бота у которого это значение будет установлено в false. Разрешено только в личных чатах (1-1)
+•	buttons_auto_adjust [Boolean] (Default: false) - если значение true, то кнопки при отображении будут автоматически переноситься на новый ряд, если не помещаются в заданном ряду
+•	keyboard [Array[Array[Object]]] (Default: []) - кнопки команд расположенные на клавиатуре, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатие на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатии на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex-формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	bubble [Array[Array[Object]]] (Default: []) - кнопки команд расположенные под сообщением, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатие на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатии на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	mentions [Array[Object]] (Default: []) - список меншнов
+Примечание
+Отображение меншнов в тексте (body) задается по следующему шаблону:
+@{mention:mention_id} - для user/all mention
+@@{mention:mention_id} - для contact mention
+##{mention:mention_id} - для chat/channel mention
+Например: @{mention:a465f0f3-1354-491c-8f11-f400164295cb}
+•	mention_type [String] (Default: "user") - тип меншна (user|chat|channel|contact|all)
+•	mention_id [UUID5] - ID меншна
+•	mention_data [Object]
+для mention_type "all" - null
+для mention_type "user" и "contact":
+•	user_huid [UUID5] - huid пользователя, которого меншат
+•	name [String] - имя пользователя
+для mention_type "chat" и "channel":
+•	group_chat_id [UUID5] - ID чата
+•	name [String] - отображаемое имя чата
+•	file [Object] (Default: null) - файл в base64-представлении.
+•	file_name [String] - имя файла
+•	data [String] - data URL + base64 data (RFC 2397)
+•	opts [Object] - опции запроса
+•	stealth_mode [Boolean] (Default: false) - если true, то сообщение будет отправлено в чат только в том случае, если в чате включен стелс-режим
+•	notification_opts [Object]
+•	send [Boolean] (Default: true) - отправлять/не отправлять push-нотификацию
+•	force_dnd [Boolean] (Default: false) - игнорировать/не игнорировать DND/Mute.
+Пример запроса:
+  {
+    "group_chat_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+    "recipients": null,
+    "notification": {
+      "status": "ok",
+      "body": "@{mention:810eceb8-7370-5c7b-965f-ddff95fa87c0} Выберите пункт меню",
+      "metadata": {"account_id": 94},
+      "opts": {"silent_response": true},
+      "bubble": [
+        [
+          {"command": "/profile", "label": "Профиль", "opts": {"background_color": "#010205", "align": "center"}}
+        ],
+        [
+          {"command": "/balance", "label": "Баланс", "data": {"operation_id": 1}},
+          {"command": "/transactions", "label": "Транзакции", "data": {"operation_id": 2}}
+        ]
+      ],
+      "keyboard": [
+        [
+          {"command": "/help", "label": "Помощь", "opts": {"silent": true, "h_size": 2}}
+        ]
+      ],
+      "mentions": [
+        {
+          "mention_id": "810eceb8-7370-5c7b-965f-ddff95fa87c0",
+          "mention_type": "user",
+          "mention_data": {
+            "user_huid": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+            "name": "Gena the Croc"
+          }
+        }
+      ]
+    },
+    "file": {
+      "data": "data:image/png;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+      "file_name": "card.png"
+    },
+    "opts": {
+      "stealth_mode": false,
+      "notification_opts": {
+        "send": true,
+        "force_dnd": false
+      }
+    }
+  }
+
+Успешный ответ (202):
+•	status [String] (Value: "ok")
+•	result [Object]
+•	sync_id [UUID] - идентификатор отправляемого сообщения
+  {
+    "status": "ok",
+    "result": {
+      "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36"
+    }
+  }
+
+Результат и возможные ошибки
+Следующий результат или ошибки будут отправлены чат-боту на callback-метод.
+Успех:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "ok",
+  "result": {}
+}
+
+Чат не найден:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "error_description": "Chat with specified id not found"
+  }
+}
+
+Ошибка от Messaging-сервиса:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "error_from_messaging_service",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "reason": "some_error",
+    "error_description": "Messaging service returns error. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Бот-отправитель не является участником чата:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "bot_is_not_a_chat_member",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "bot_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "error_description": "Bot is not a chat member"
+  }
+}
+
+Стелс-режим отключен в чате, но требуется опцией:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "stealth_mode_disabled",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "bot_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "error_description": "Stealth mode disabled in specified chat"
+  }
+}
+
+Итоговый список получателей события пуст:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "event_recipients_list_is_empty",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "bot_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "recipients_param": ["b165f00f-3154-412c-7f11-c120164257da"],
+    "error_description": "Event recipients list is empty"
+  }
+}
+
+Ошибка в процессе обработки:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["{error1}", "{error2}"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info"
+  }
+}
+
+Непредвиденная ошибка:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "unexpected_error",
+  "errors": ["{error1}", "{error2}"],
+  "error_data": {
+    "error_description": "Got unexpected error. Check BotX container logs (level :error or upper) for more info"
+  }
+}
+
+Ошибки загрузки файла
+Список возможных ошибок можно найти в описание метода Загрузка файла.
+Отправка директ-нотификации v4 (синхронная версия)
+Отправляет сообщение в чат.
+Обрабатывается синхронно: отправитель ожидает во время выполнения и получает ответ в рамках этого запроса.
+В ответ на запрос приходит sync_id [UUID] — идентификатор отправляемого сообщения.
+Заголовки и параметры запроса аналогичны асинхронной версии.
+Успешный ответ (200):
+•	status [String] (Value: "ok")
+•	result [Object]
+•	sync_id [UUID] - идентификатор отправляемого сообщения
+  {
+    "status": "ok",
+    "result": {
+      "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36"
+    }
+  }
+
+Список возможных ошибок аналогичен асинхронной версии, но ошибки возвращаются в ответе на запрос, а не отправляются на callback-метод.
+Отправка внутренней бот-нотификации
+Обрабатывается асинхронно.
+В ответ на запрос приходит sync_id [UUID] - идентификатор отправляемого сообщения.
+В случае успеха или провала отправки на коллбек чат-боту отправляется запрос с результатом отправки.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - ID чата
+•	data [Object] - пользовательские данные
+•	opts [Object] (default: {}) - пользовательские опции
+•	recipients [Array[UUID]] (default: Null) - список ботов получателей. Если не передан, то отправляется всем ботам в чате
+{
+  "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+  "data": {
+    "message": "ping"
+  },
+  "opts": {
+    "internal_token": "FEFctII3lRlRBcetROeFfduPmXxE"
+  },
+  "recipients": null
+}
+
+Успешный ответ (202)
+•	status [String] (Value: "ok")
+•	result [Object]
+•	sync_id [UUID] - идентификатор отправляемого сообщения
+  {
+    "status": "ok",
+    "result": {
+      "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36"
+    }
+  }
+
+Превышен лимит интенсивности запросов (429):
+  {
+    "status": "error",
+    "reason": "too_many_requests",
+    "errors": [],
+    "error_data": {
+      "bot_id": "b165f00f-3154-412c-7f11-c120164257da"
+    }
+  }
+
+Результат и возможные ошибки
+Следующий результат или ошибки будут отправлены чат-боту на callback-метод.
+Успех:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "ok",
+  "result": {}
+}
+
+Чат не найден:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "error_description": "Chat with specified id not found"
+  }
+}
+
+Ошибка от Messaging-сервиса:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "error_from_messaging_service",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "reason": "some_error",
+    "error_description": "Messaging service returns error. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Бот-отправитель не является участником чата:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "bot_is_not_a_chat_member",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "bot_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "error_description": "Bot is not a chat member"
+  }
+}
+
+Итоговый список получателей события пуст:
+{
+  "sync_id": "f0f105d2-101f-59b0-9e10-e432efce2c36",
+  "status": "error",
+  "reason": "event_recipients_list_is_empty",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "705df263-6bfd-536a-9d51-13524afaab5c",
+    "bot_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "recipients_param": ["b165f00f-3154-412c-7f11-c120164257da"],
+    "error_description": "Event recipients list is empty"
+  }
+}
+Events API
+Список методов
+Метод	URL	Описание
+POST	/api/v3/botx/events/edit_event	Редактирование события
+
+POST	/api/v3/botx/events/reply_event	Ответ на сообщение (reply)
+
+GET	/api/v3/botx/events/:sync_id/status	Получение статуса сообщения
+
+POST	/api/v3/botx/events/typing	Отправка typing
+
+POST	/api/v3/botx/events/stop_typing	Отправка stop_typing
+
+POST	/api/v3/botx/events/delete_event	Удаление сообщения
+
+Редактирование события
+Редактирование содержимого события (результата команды или нотификации).
+Можно редактировать только события, отправленные текущим чат-ботом.
+Обрабатывается асинхронно.
+Логика обновления полей события
+Если поле не указано в запросе, то оно не обновляется.
+Для полей keyboard/bubble/mentions, если в запросе указан пустой массив [], то набор становится пустым.
+Если обновлен текст, но при этом есть меншны, то существующие меншны будут добавлены в новый текст.
+Если обновляется список меншнов, но есть текст, то новый список меншнов будет добавлен в текст (а старый будет удален из текста).
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	sync_id [UUID] - uuid редактируемого события
+•	payload [Object]
+•	status [String] - "ok" | "error" (Default: Skip). Служит идентификатором успешности или провала выполнения команды.
+•	body [String] (Default: Skip) - текстовое сообщение. Отображается в чате как текстовое сообщение.
+•	metadata [Object] (Default: Skip) - метаданные, которые будут отправлены в параметрах команды при нажатие на любую кнопку.
+•	opts [Object] (Default: {}) - опции сообщения
+•	silent_response [Boolean] (Default: false) - если значение true, то последующие сообщения пользователя не будут отображаться в чате, до тех пор пока не придет сообщения бота, у которого это значение будет установлено в false. Разрешено только в личных чатах (1-1)
+•	buttons_auto_adjust [Boolean] (Default: false) - если значение true, то кнопки при отображении будут автоматически переноситься на новый ряд, если не помещаются в заданном ряду
+•	keyboard [Array[Array[Object]]] (Default: Skip) - кнопки команд, расположенные на клавиатуре, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатии на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатие на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex-формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	bubble [Array[Array[Object]]] (Default: Skip) - кнопки команд расположенные под сообщением, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатие на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатии на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex-формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	mentions [Array[Object]] (Default: Skip) - список меншнов
+•	mention_type [String] (Default: "user") - тип меншна (user|chat|contact)
+•	mention_id [UUID5] (Default: autogenerate) - ID меншна
+•	mention_data [Object]
+для mention_type "user" и "contact":
+•	user_huid [UUID5] - huid пользователя которого меншат
+•	name [String] (default: имя из Active Directory) - имя пользователя
+для mention_type "chat":
+•	group_chat_id [UUID5] - ID чата
+•	name [String] - отображаемое имя чата
+•	file [Object] (Default: Skip) - файл в base64-представление. Если передать null, то существующий файл удалится из события
+•	file_name [String] - имя файла
+•	data [String] - data URL + base64 data (RFC 2397)
+•	opts [Object] - опции запроса
+•	silent_response [Boolean] (Default: false) - если значение true, то последующие сообщения пользователя не будут отображаться в чате, до тех пор пока не придет сообщения бота, у которого это значение будет установлено в false. Разрешено только в личных чатах (1-1).
+•	raw_mentions [Boolean] (Default: false) - если true, то меншны не будут подставляться в начало текста сообщения, а будут подставлены в соответствие с заданным форматом
+Пример запроса:
+  {
+    "sync_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "payload": {
+      "status": "ok",
+      "body": "Операция завершена!",
+      "bubble": [],
+      "keyboard": [
+        [
+          {"command": "/balance", "label": "Баланс"},
+          {"command": "/transactions", "label": "Транзакции"}
+        ],
+        [
+          {"command": "/help", "label": "Помощь", "opts": {"silent": true, "h_size": 2}}
+        ]
+      ],
+      "mentions": []
+    },
+    "opts": {}
+  }
+
+Ответ на сообщение (reply)
+Обрабатывается асинхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "multipart/form-data" (при отсутствие файла можно использовать "application/json")
+Параметры запроса:
+•	source_sync_id [UUID] - идентификатор сообщения, на который будет отправлен ответ
+•	reply [Object]
+•	status [String] - "ok" | "error". Служит идентификатором успешности или провала выполнения команды.
+•	body [String] - текстовое сообщение. Отображается в чате, как текстовое сообщение.
+•	metadata [Object] (Default: {}) - метаданные, которые будут отправлены в параметрах команды при нажатие на любую кнопку.
+•	opts [Object] (Default: {}) - опции сообщения
+•	silent_response [Boolean] (Default: false) - если значение true, то последующие сообщения пользователя не будут отображаться в чате, до тех пор пока не придет сообщения бота, у которого это значение будет установлено в false. Разрешено только в личных чатах (1-1)
+•	buttons_auto_adjust [Boolean] (Default: false) - если значение true, то кнопки, при отображение, будут автоматически переноситься на новый ряд, если не помещаются в заданном ряду
+•	keyboard [Array[Array[Object]]] (Default: []) - кнопки команд расположенные на клавиатуре, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатие на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатие на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex-формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	bubble [Array[Array[Object]]] (Default: []) - кнопки команд, расположенные под сообщением, представленные в виде двумерного массива объектов.
+•	command [String] - тело команды
+•	label [String] - наименование команды
+•	data [Object] (Default: {}) - объект с данными, которые будут отправлены в качестве параметров команды при нажатие на кнопку
+•	opts [Object] - объект с клиентскими опциями кнопки
+•	silent [Boolean] (Default: false) - если значение true, то при нажатие на кнопку в чат не будет отправлено сообщение с текстом команды и сама команда отправится боту в фоне
+•	h_size [Integer] (Default: 1) - размер кнопки по горизонтали
+•	show_alert [Boolean] (Default: false) - если значение true, то при нажатии на кнопку отобразится всплывающее уведомление с заданным в alert_text сообщением
+•	alert_text [String] (Default: null) - текст уведомления. Если значение null, то выведется тело команды
+•	font_color [String] (Default: null) - цвет текста в hex-формате
+•	background_color [String] (Default: null) - цвет фона/границ в hex-формате
+•	align [String] (Default: "left") - выравнивание текста (left|center|right)
+•	mentions [Array[Object]] (Default: []) - список меншнов
+•	mention_type [String] (Default: "user") - тип меншна (user|chat|contact)
+•	mention_id [UUID5] (Default: autogenerate) - ID меншна
+•	mention_data [Object]
+для mention_type "user" и "contact":
+•	user_huid [UUID5] - huid пользователя которого меншат
+•	name [String] (default: имя из Active Directory) - имя пользователя
+для mention_type "chat":
+•	group_chat_id [UUID5] - ID чата
+•	name [String] - отображаемое имя чата
+•	file [Binary]|[Object] (Default: null) - файл в бинарном представление (multipart-запрос) или base64.
+•	Base64 file format
+•	file_name [String] - имя файла
+•	data [String] - data URL + base64 data (RFC 2397)
+•	caption [String] (Default: null) - текст под файлом
+•	opts [Object] - опции запроса
+•	stealth_mode [Boolean] (Default: false) - если true, то сообщение будет отправлено в чат только в том случае, если в чате включен стелс-режим
+•	notification_opts [Object]
+•	send [Boolean] (Default: true) - отправлять/не отправлять push-нотификацию
+•	force_dnd [Boolean] (Default: false) - игнорировать/не игнорировать DND/Mute.
+Пример запроса:
+  {
+    "source_sync_id": "b165f00f-3154-412c-7f11-c120164257da",
+    "reply": {
+      "status": "ok",
+      "body": "Хороший выбор! Я сохранил ваш вариант ответа.",
+      "metadata": {},
+      "opts": {"silent_response": false},
+      "bubble": [],
+      "keyboard": [],
+      "mentions": []
+    },
+    "file": null,
+    "opts": {
+      "stealth_mode": false,
+      "notification_opts": {
+        "send": true,
+        "force_dnd": false
+      }
+    }
+  }
+
+Параметры успешного ответа:
+•	status [String] (Value: "ok")
+•	result [String] (Value: "bot_reply_pushed")
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": "bot_reply_pushed"
+  }
+
+Получение статуса сообщения
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	sync_id [UUID] - идентификатор события
+Пример параметров запроса:
+  /api/v3/botx/events/dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4/status 
+
+Пример успешного ответа:
+•	group_chat_id [UUID] - идентификатор чата
+•	sent_to [Array[UUID]] - список huid пользователей которым было отправлено событие
+•	read_by [Array[Object]]
+•	user_huid [UUID] - huid пользователя, прочитавшего событие
+•	read_at [DateTime] - время прочтения
+•	received_by [Array[Object]]
+•	user_huid [UUID] - huid пользователя, получившего событие
+•	received_at [DateTime] - время получения
+  {
+    "status": "ok",
+    "result": {
+      "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5",
+      "sent_to": ["32bb051e-cee9-5c5c-9c35-f213ec18d11e"],
+      "read_by": [
+        {
+          "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+          "read_at": "2019-08-29T11:22:48.358586Z"
+        }
+      ],
+      "received_by": [
+        {
+          "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+          "received_at": "2019-08-29T11:22:48.358586Z"
+        }
+      ]
+    }
+  }
+
+Событие не найдено (404):
+{
+  "status": "error",
+  "reason": "event_not_found",
+  "errors": [],
+  "error_data": {
+    "sync_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd"
+  }
+}
+
+Ошибка messaging-сервиса при запросе события (500):
+{
+  "status": "error",
+  "reason": "messaging_service_error",
+  "errors": [],
+  "error_data": {
+    "sync_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd"
+  }
+}
+
+Отправка typing
+Обрабатывается асинхронно.
+Событие отправляется только пользователям с того же сервера, где зарегистрирован бот.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+Пример запроса:
+{
+  "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5"
+}
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": "typing_event_pushed"
+  }
+
+Отправка stop_typing
+Обрабатывается асинхронно.
+Событие отправляется только пользователям с того же сервера, где зарегистрирован бот.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+Пример запроса:
+{
+  "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5"
+}
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": "stop_typing_event_pushed"
+  }
+
+Удаление сообщения
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	sync_id [UUID] - идентификатор сообщения
+Пример запроса:
+{
+  "sync_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5"
+}
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": "event_deleted"
+  }
+
+Сообщение не найдено (404):
+  {
+    "status": "error",
+    "reason": "sync_id_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+Chats API
+Список методов
+Метод	URL	Описание
+GET	/api/v1/botx/chats/personal	Получение личного чата бота и юзера
+
+GET	/api/v3/botx/chats/list	Получение списка чатов бота
+
+GET	/api/v3/botx/chats/info	Получение информации о чате
+
+POST	/api/v3/botx/chats/add_user	Добавление юзеров в чат
+
+POST	/api/v3/botx/chats/remove_user	Удаление юзеров из чата
+
+POST	/api/v3/botx/chats/add_admin	Добавление администратора в чат
+
+POST	/api/v3/botx/chats/stealth_set	Включение стелс-режима в чате
+
+POST	/api/v3/botx/chats/stealth_disable	Отключение стелс-режима в чате
+
+POST	/api/v3/botx/chats/create	Создание чата
+
+POST	/api/v3/botx/chats/pin_message	Закрепление сообщения в чате
+
+POST	/api/v3/botx/chats/unpin_message	Открепление сообщения в чате
+
+POST	/api/v3/botx/chats/create_link	Создание ссылки
+
+POST	/api/v3/botx/chats/create_thread	Создание треда
+
+Получение личного чата бота и юзера
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huid [UUID] - идентификатор пользователя
+Пример параметров запроса:
+  ?user_huid=dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+        "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5",
+        "chat_type": "group_chat",
+        "name": "Chat Name",
+        "description": "Desc",
+        "members": [
+          "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+          "705df263-6bfd-536a-9d51-13524afaab5c"
+        ],
+        "shared_history": false,
+        "inserted_at": "2019-08-29T11:22:48.358586Z",
+        "updated_at": "2019-08-30T21:02:10.453786Z"
+    }
+  }
+
+Получение списка чатов бота
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+Отсутствуют
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": [
+      {
+        "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5",
+        "chat_type": "group_chat",
+        "name": "Chat Name",
+        "description": "Desc",
+        "members": [
+          "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+          "705df263-6bfd-536a-9d51-13524afaab5c"
+        ],
+        "shared_history": false,
+        "inserted_at": "2019-08-29T11:22:48.358586Z",
+        "updated_at": "2019-08-30T21:02:10.453786Z"
+      }
+    ]
+  }
+
+Получение информации о чате
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+Пример параметров запроса:
+  ?group_chat_id=dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "chat_type": "group_chat",
+      "creator": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+      "description": null,
+      "group_chat_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5",
+      "inserted_at": "2019-08-29T11:22:48.358586Z",
+      "members": [
+        {
+          "admin": true,
+          "server_id": "32bb051e-cee9-5c5c-9c35-f213ec18d11e",
+          "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+          "user_kind": "user"
+        },
+        {
+          "admin": false,
+          "server_id": "32bb051e-cee9-5c5c-9c35-f213ec18d11e",
+          "user_huid": "705df263-6bfd-536a-9d51-13524afaab5c",
+          "user_kind": "botx"
+        }
+      ],
+      "name": "Group Chat Example",
+      "shared_history": false
+    }
+  }
+
+Чат не найден (404):
+{
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "error_description": "Chat with specified id not found"
+  }
+}
+
+Messaging-сервис вернул ошибку (500):
+{
+  "status": "error",
+  "reason": "error_from_messaging_service",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "reason": "some_error",
+    "error_description": "Chat info fetching failed. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Добавление юзеров в чат
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+•	user_huids [Array[UUID]] - список добавляемых юзеров
+Пример запроса:
+  {
+    "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "user_huids": ["a465f0f3-1354-491c-8f11-f400164295cb"]
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": ["Chat not found"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Бот не является админом чата (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": ["Sender is not chat admin"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "sender": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Редактирование списка участников персонального чата невозможно (403):
+  {
+    "status": "error",
+    "reason": "chat_members_not_modifiable",
+    "errors": ["Сan't add users to personal chats"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Удаление юзеров из чата
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+•	user_huids [Array[UUID]] - список удаляемых юзеров
+Пример запроса:
+  {
+    "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "user_huids": ["a465f0f3-1354-491c-8f11-f400164295cb"]
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": ["Chat not found"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Бот не является админом чата (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": ["Sender is not chat admin"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "sender": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Редактирование списка участников персонального чата невозможно (403):
+  {
+    "status": "error",
+    "reason": "chat_members_not_modifiable",
+    "errors": ["Сan't remove users from personal chats"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Добавление администратора в чат
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+•	user_huids [Array[UUID]] - список юзеров чата, которые назначаются администратором
+Пример запроса:
+  {
+    "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "user_huids": ["a465f0f3-1354-491c-8f11-f400164295cb"]
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": ["Chat not found"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Бот не является админом чата (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": ["Sender is not chat admin"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "sender": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Редактирование списка администраторов персонального чата невозможно (400):
+  {
+    "status": "error",
+    "reason": "chat_members_not_modifiable",
+    "errors": [],
+    "error_data": {}
+  }
+
+Включение стелс-режима в чате
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+•	disable_web [Boolean] (Default: false) - если true - отключает доступ к чату с веб-клиента (по умолчанию false)
+•	burn_in [Integer] (Default: null) - время сгорания для прочитавшего, в секундах (по умолчанию null - выключено)
+•	expire_in [Integer] (Default: null) - время сгорания для всех участников чата, в секундах (по умолчанию null - выключено)
+Пример запроса:
+  {
+    "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "disable_web": false,
+    "burn_in": 60,
+    "expire_in": 3200
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": ["Chat not found"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Бот не является админом чата (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": ["Sender is not chat admin"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "sender": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Отключение стелс-режима в чате
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+Пример запроса:
+  {
+    "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": ["Chat not found"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Бот не является админом чата (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": ["Sender is not chat admin"],
+    "error_data": {
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "sender": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Создание чата
+Обрабатывается синхронно.
+В персональных чатах name игнорируется клиентами, можно указать любое, например "Personal chat".
+Создателем чата будет являться бот, который инициировал запрос.
+Бот будет добавлен в список участников чата, даже если он явно не указан в списке при отправке запроса.
+Чтобы бот мог создавать чат, в панели администратора ему нужно задать свойство allow_chat_creating в значение true.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	name [String] - имя чата
+•	description [String] (Default: null) - описание чата
+•	chat_type [String] - тип чата (chat|group_chat|channel)
+•	members [Array[UUID]] - список HUID участников чата
+•	avatar [String] (Default: null) - аватар чата в формате data URL + base64 data (RFC 2397)
+•	shared_history [Boolean] (Default: false) - если true, то созданный чат будет иметь признаки шаред-чата. Для персональных чатов всегда false.
+Пример запроса:
+  {
+    "name": "New Chat",
+    "description": "Simple group chat",
+    "chat_type": "group_chat",
+    "members": [
+      "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "a465f0f3-1354-491c-8f11-f400164295cb"
+    ],
+    "avatar": "data:image/png;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "shared_history": false
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Боту запрещено создавать чаты (403):
+  {
+    "status": "error",
+    "reason": "chat_creation_is_prohibited",
+    "errors": ["This bot is not allowed to create chats"],
+    "error_data": {
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Ошибка создания чата (422):
+  {
+    "status": "error",
+    "reason": "|specified reason|",
+    "errors": ["|specified errors|"],
+    "error_data": {}
+  }
+
+Закрепление сообщения в чате
+Обрабатывается синхронно.
+Бот закрепляет указанное сообщение в чате. Для закрепления в каналах у бота должны быть права администратора.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	chat_id [UUID] - идентификатор чата
+•	sync_id [UUID] - идентификатор сообщения
+Пример запроса:
+  {
+    "chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+    "sync_id": "465f0f3-1354-491c-8f11-f400164295cb"
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": "message_pinned"
+  }
+
+Бот не может закрепить сообщение (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": [],
+    "error_data": {
+      "error_description": "Bot doesn't have permission for this operation in current chat",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": [],
+    "error_data": {
+      "error_description": "Chat with specified id not found",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }  
+  }
+
+Messaging-сервис вернул ошибку (500):
+  {
+    "status": "error",
+    "reason": "error_from_messaging_service",
+    "errors": [],
+    "error_data": {
+      "error_description": "Messaging service returns error. Check BotX container logs (level :warn or upper) for more info.",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "reason": "some_error"
+    }  
+  }
+
+Открепление сообщения в чате
+Обрабатывается синхронно.
+Бот открепляет указанное сообщение в чате. Для открепления в каналах у бота должны быть права администратора.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	chat_id [UUID] - идентификатор чата
+Пример запроса:
+  {
+    "chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": "message_unpinned"
+  }
+
+Бот не может открепить сообщение (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": [],
+    "error_data": {
+      "error_description": "Bot doesn't have permission for this operation in current chat",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": [],
+    "error_data": {
+      "error_description": "Chat with specified id not found",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }  
+  }
+
+Messaging-сервис вернул ошибку (500):
+  {
+    "status": "error",
+    "reason": "error_from_messaging_service",
+    "errors": [],
+    "error_data": {
+      "error_description": "Messaging service returns error. Check BotX container logs (level :warn or upper) for more info.",
+      "group_chat_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+      "reason": "some_error"
+    }  
+  }
+
+Создание ссылки
+Обрабатывается синхронно.
+Создателем ссылки будет являться бот, который инициировал запрос.
+Чтобы бот мог создавать ссылки, он должен являться администратором чата.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	chat_id [UUID] - идентификатор чата
+•	link [Object] - параметры ссылки
+•	link_type [String] - тип ссылки (public | corporate | trusts | server)
+•	access_code [String] (Default: null) - код доступа. Если значение null, код доступа не требуется
+•	link_ttl [Integer] (Default: null) - время действия ссылки в секундах. Если значение null, ссылка действует бессрочно
+Пример запроса:
+  {
+    "chat_id": "f102c2a6-bae5-5ade-9ace-10e5bd96102d",
+    "link": {
+      "link_type": "public",
+      "access_code": "1234",
+      "link_ttl": 3600
+    }
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "url": "https://xlnk.ms/ASjalqtRVgGZQrtFCfJI8w:phn8-qGbUlalkpsOdcoIlg:8ALCprrlWt6azhDlvZYQLQ:Y3RzMWRldi5jY3N0ZWFtLnJ1",
+      "link_type": "public",
+      "access_code": "1234",
+      "link_ttl": 3600
+    }
+  }
+
+Чат не найден (404):
+  {
+    "status": "error",
+    "reason": "chat_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+
+Бот не является админом чата и не может создать ссылку (403):
+  {
+    "status": "error",
+    "reason": "no_permission_for_operation",
+    "errors": [],
+    "error_data": {}
+  }
+
+Создание треда
+Обрабатывается синхронно.
+Создателем треда будет являться бот, который инициировал запрос.
+Чтобы бот мог создавать треды, в панели администратора ему нужно задать свойство allow_chat_creating в значение true, либо тип бота должен быть internal.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	sync_id [UUID] - идентификатор сообщения
+Пример запроса:
+  {
+    "sync_id": "740cf331-d833-5250-b5a5-5b5cbc697ff5"
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "thread_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+    }
+  }
+
+Боту запрещено создавать треды (403):
+  {
+    "status": "error",
+    "reason": "thread_creation_is_prohibited",
+    "errors": ["This bot is not allowed to create thread"],
+    "error_data": {
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Событие не найдено (404):
+  {
+    "status": "error",
+    "reason": "event_not_found",
+    "errors": ["Event not found"],
+    "error_data": {
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Бот не является участником чата (403):
+  {
+    "status": "error",
+    "reason": "bot_is_not_a_chat_member",
+    "errors": ["This bot is not a chat member"],
+    "error_data": {
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+
+Тред уже создан (409):
+  {
+    "status": "error",
+    "reason": "thread_already_created",
+    "errors": ["Thread already created"],
+    "error_data": {
+      "bot_id": "a465f0f3-1354-491c-8f11-f400164295cb"
+    }
+  }
+Users API
+Список методов
+Метод	URL	Описание
+POST	/api/v3/botx/users/by_email	Поиск данных юзеров по их почтам
+
+GET	/api/v3/botx/users/by_email	Поиск данных юзера по его почте
+
+GET	/api/v3/botx/users/by_huid	Поиск данных юзера по его huid
+
+GET	/api/v3/botx/users/by_login	Поиск данных юзера по его AD-логину и AD-домену
+
+GET	/api/v3/botx/users/by_other_id	Поиск данных юзера по дополнительному идентификатору
+
+GET	/api/v3/botx/users/users_as_csv	Получение списка пользователей на CTS
+
+PUT	/api/v3/botx/users/update_profile	Обновление профиля юзера
+
+Поиск данных юзеров по их почтам
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	emails [Array[String]] - почты юзеров
+•	trusts_search [Boolean] (Default: false) - искать ли юзеров также на трастовых серверах
+•	partial_response [Boolean] (Default: false) - возвращать ли локальные результаты, даже если один из трастовых серверов вернул ошибку (имеет смысл только при trusts_search: true)
+Пример параметров запроса:
+  {
+    "emails": ["user1@cts.com", "user2@cts.com"],
+    "trusts_search": false,
+    "partial_response": false
+  }
+
+Пример трастового запроса:
+  {
+    "emails": ["user1@cts1.com", "user2@cts2.com", "user3@cts3.com"],
+    "trusts_search": true,
+    "partial_response": true
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": [
+      {
+        "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+        "ad_login": "ad_user_login1",
+        "ad_domain": "cts.com",
+        "name": "Bob",
+        "company": "Bobs Co",
+        "company_position": "Director",
+        "department": "Owners",
+        "emails": [
+          "ad_user@cts.com", "user1@cts.com"
+        ],
+        "other_id": "some_id1",
+        "user_kind": "cts_user",
+        "active": true,
+        "created_at": "2023-03-26T14:36:08.740618Z",
+        "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+        "description": "Director in Owners dep",
+        "ip_phone": 1271020,
+        "manager": "Alice",
+        "office": "SUN",
+        "other_ip_phone": null,
+        "other_phone": null,
+        "public_name": "Bobby",
+        "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+        "updated_at": "2023-03-26T14:36:08.740618Z",
+      },
+      {
+        "user_huid": "a465f0f3-1354-491c-8f11-f400164295cb",
+        "ad_login": "ad_user_login2",
+        "ad_domain": "cts.com",
+        "name": "Alice",
+        "company": "Bobs Co",
+        "company_position": "CEO",
+        "department": "Owners",
+        "emails": [
+          "user2@cts.com"
+        ],
+        "other_id": "some_id2",
+        "user_kind": "cts_user",
+        "active": true,
+        "created_at": "2023-03-28T14:36:08.740618Z",
+        "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+        "description": "CEO",
+        "ip_phone": 156,
+        "manager": null,
+        "office": "SUN",
+        "other_ip_phone": null,
+        "other_phone": null,
+        "public_name": "Bobby",
+        "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+        "updated_at": "2023-03-28T14:36:08.740618Z",
+      }
+    ]
+  }
+
+Не передан обязательный параметр emails (400):
+  {
+    "status": "error",
+    "reason": "malformed_request",
+    "errors": [],
+    "error_data": {
+      "emails": "missing"
+    }
+  }
+
+Ошибка при поиске на трастовых серверах, когда partial_response: false (503):
+  {
+    "status": "error",
+    "reason": "trust_search_partial_failure",
+    "errors": [],
+    "error_data": {
+      "failed_servers": [
+        "f46440a4-d930-58d4-b3f5-8110ab846ee3"
+      ]
+    }
+  }
+
+Поиск данных юзера по его почте
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	email [String] - почта юзера
+•	trusts_search [Boolean] (Default: false) - искать ли юзеров также на трастовых серверах
+•	partial_response [Boolean] (Default: false) - возвращать ли локальные результаты, даже если один из трастовых серверов вернул ошибку (имеет смысл только при trusts_search: true)
+Пример параметров запроса:
+  ?email=user1@cts.com
+
+  ?email=user1@cts.com&trusts_search=true&partial_response=true
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+      "ad_login": "ad_user_login1",
+      "ad_domain": "cts.com",
+      "name": "Bob",
+      "company": "Bobs Co",
+      "company_position": "Director",
+      "department": "Owners",
+      "emails": [
+        "ad_user@cts.com", "user1@cts.com"
+      ],
+      "other_id": "some_id1",
+      "user_kind": "cts_user",
+      "active": true,
+      "created_at": "2023-03-26T14:36:08.740618Z",
+      "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+      "description": "Director in Owners dep",
+      "ip_phone": 1271020,
+      "manager": "Alice",
+      "office": "SUN",
+      "other_ip_phone": null,
+      "other_phone": null,
+      "public_name": "Bobby",
+      "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+      "updated_at": "2023-03-26T14:36:08.740618Z",
+    }
+  }
+
+Данные юзера не найдены (404):
+  {
+    "status": "error",
+    "reason": "user_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+
+Поиск данных юзера по его huid
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huid [UUID] - huid юзера
+Пример параметров запроса:
+  ?user_huid=6fafda2c-6505-57a5-a088-25ea5d1d0364
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+      "ad_login": "ad_user_login1",
+      "ad_domain": "cts.com",
+      "name": "Bob",
+      "company": "Bobs Co",
+      "company_position": "Director",
+      "department": "Owners",
+      "emails": [
+        "ad_user@cts.com", "user1@cts.com"
+      ],
+      "other_id": "some_id1",
+      "user_kind": "cts_user",
+      "active": true,
+      "created_at": "2023-03-26T14:36:08.740618Z",
+      "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+      "description": "Director in Owners dep",
+      "ip_phone": 1271020,
+      "manager": "Alice",
+      "office": "SUN",
+      "other_ip_phone": null,
+      "other_phone": null,
+      "public_name": "Bobby",
+      "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+      "updated_at": "2023-03-26T14:36:08.740618Z",
+    }
+  }
+
+Данные юзера не найдены (404):
+  {
+    "status": "error",
+    "reason": "user_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+
+Поиск данных юзера по его AD-логину и AD-домену
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	ad_login [String] - AD-логин пользователя
+•	ad_domain [String] - AD-домен пользователя
+Пример запроса:
+  ?ad_login=ad_user_login&ad_domain=cts.com
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+      "ad_login": "ad_user_login1",
+      "ad_domain": "cts.com",
+      "name": "Bob",
+      "company": "Bobs Co",
+      "company_position": "Director",
+      "department": "Owners",
+      "emails": [
+        "ad_user@cts.com", "user1@cts.com"
+      ],
+      "other_id": "some_id1",
+      "user_kind": "cts_user",
+      "active": true,
+      "created_at": "2023-03-26T14:36:08.740618Z",
+      "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+      "description": "Director in Owners dep",
+      "ip_phone": 1271020,
+      "manager": "Alice",
+      "office": "SUN",
+      "other_ip_phone": null,
+      "other_phone": null,
+      "public_name": "Bobby",
+      "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+      "updated_at": "2023-03-26T14:36:08.740618Z",
+    }
+  }
+
+Данные юзера не найдены (404):
+  {
+    "status": "error",
+    "reason": "user_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+
+Поиск данных юзера по дополнительному идентификатору
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	other_id [String] - дополнительный идентификатор
+Пример параметров запроса:
+  ?other_id=some_id
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": {
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+      "ad_login": "ad_user_login1",
+      "ad_domain": "cts.com",
+      "name": "Bob",
+      "company": "Bobs Co",
+      "company_position": "Director",
+      "department": "Owners",
+      "emails": [
+        "ad_user@cts.com", "user1@cts.com"
+      ],
+      "other_id": "some_id1",
+      "user_kind": "cts_user",
+      "active": true,
+      "created_at": "2023-03-26T14:36:08.740618Z",
+      "cts_id": "e0140f4c-4af2-5a2e-9ad1-5f37fceafbaf",
+      "description": "Director in Owners dep",
+      "ip_phone": 1271020,
+      "manager": "Alice",
+      "office": "SUN",
+      "other_ip_phone": null,
+      "other_phone": null,
+      "public_name": "Bobby",
+      "rts_id": "f46440a4-d930-58d4-b3f5-8110ab846ee3",
+      "updated_at": "2023-03-26T14:36:08.740618Z",
+    }
+  }
+
+Данные юзера не найдены (404):
+  {
+    "status": "error",
+    "reason": "user_not_found",
+    "errors": [],
+    "error_data": {}
+  }
+
+Получение списка пользователей на CTS
+Обрабатывается синхронно.
+Список пользователей выдаётся в виде CSV-файла со следующим набором столбцов:
+•	HUID [UUID] - идентификатор пользователя
+•	AD Login [String] - AD-логин (Active Directory) пользователя
+•	Domain [String] - AD-домен пользователя
+•	AD E-mail [String] (Default: null) - AD-email пользователя
+•	Name [String] - имя пользователя
+•	Sync source [String] - источник синхронизации (ad, admin, email, openid)
+•	Active [Boolean] - флаг активности пользователя
+•	Kind [String] - тип пользователя (cts_user, unregistered, botx)
+•	Company [String] (Default: null) - имя компании пользователя
+•	Department [String] (Default: null) - отдел, в котором работает пользователь
+•	Position [String] (Default: null) - должность пользователя
+•	Manager [String] (Default: null) - руководитель
+•	Manager HUID [String] (Default: null) - HUID руководителя
+Заголовки:
+•	authorization - "Bearer <token>"
+Параметры запроса:
+•	cts_user [Boolean] (Default: true) - включить в результат пользователей с типом cts_user
+•	unregistered [Boolean] (Default: true) - включить в результат пользователей с типом unregistered
+•	botx [Boolean] (Default: false) - включить в результат пользователей с типом botx
+Пример параметров запроса:
+  ?cts_user=true&unregistered=false
+
+Пример успешного ответа:
+HUID,AD Login,Domain,AD E-mail,Name,Sync source,Active,Kind,Company,Department,Position
+dbc8934f-d0d7-4a9e-89df-d45c137a851c,test_user_17,cts.example.com,,test_user_17,ad,true,cts_user,,,
+5c1d8ec4-24c9-4dea-af13-075c52444f08,test11,cts.example.com,test11@domain.com,test11 edit,ad,true,cts_user,,,
+2ffb8c03-380a-43c5-9caa-ae88d2f9032e,test-5,cts.example.com,test-5@domain.com,test-5,ad,true,cts_user,,,
+
+Не выбран ни один из типов пользовалей (400):
+{
+  "status": "error",
+  "reason": "no_user_kind_selected",
+  "errors": [],
+  "error_data": {}  
+}
+
+Обновление профиля юзера
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huid [String] - идентификатор юзера
+•	name [String] (Default: skip) - имя юзера
+•	public_name [String] (Default: skip) - публичное имя юзера
+•	avatar [String] (Default: skip) - аватар пользователя в формате data URL + base64 data (RFC 2397)
+•	company [String] (Default: skip) - компания
+•	company_position [String] (Default: skip) - должность
+•	description [String] (Default: skip) - описание/заметки
+•	department [String] (Default: skip) - отдел
+•	office [String] (Default: skip) - адрес офиса
+•	manager [String] (Default: skip) - руководитель
+Пример параметров запроса:
+  {
+    "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+    "name": "John Bork",
+    "public_name": "Johny B.",
+    "avatar": "data:image/png;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "company": "Doge Co",
+    "company_position": "Chief",
+    "description": "Just boss",
+    "department": "Commercy",
+    "office": "Moscow",
+    "manager": "Bob",
+  }
+
+Пример успешного ответа:
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Юзер не найден (404):
+  {
+    "status": "error",
+    "reason": "user_not_found",
+    "errors": [],
+    "error_data": {
+      "error_description": "User with specified id not found",
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364"
+    }
+  }
+
+Неправильные данные для профиля (400):
+  {
+    "status": "error",
+    "reason": "invalid_profile",
+    "errors": [],
+    "error_data": {
+      "errors": {"field": "invalid"},
+      "error_description": "Invalid profile data",
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364"
+    }
+  }
+
+Ошибка от сервиса ad_phonebook (503):
+  {
+    "status": "error",
+    "reason": "error_from_ad_phonebook_service",
+    "errors": [],
+    "error_data": {
+      "reason": "some_error",
+      "error_description": "AdPhonebook service returns error. Check BotX container logs (level :warn or upper) for more info.",
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364"
+    }
+  }
+
+Непредвиденная ошибка (503):
+  {
+    "status": "error",
+    "reason": "unexpected_error",
+    "errors": [],
+    "error_data": {
+      "error_description": "Got unexpected error. Check BotX container logs (level :error or upper) for more info.",
+      "user_huid": "6fafda2c-6505-57a5-a088-25ea5d1d0364"
+    }
+  }
+Files API
+Список методов
+Метод	URL	Описание
+GET	/api/v3/botx/files/download	Скачивание файла
+
+POST	/api/v3/botx/files/upload	Загрузка файла
+
+Скачивание файла
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	group_chat_id [UUID] - идентификатор чата
+•	file_id [UUID] - идентификатор файла
+•	is_preview [Boolean] (Default: false) - если true и файл имеет preview, то вернется содержимое preview, иначе оригинал
+Пример запроса:
+?group_chat_id=84a12e71-3efc-5c34-87d5-84e3d9ad64fd
+&file_id=e48c5612-b94f-4264-adc2-1bc36445a226
+&is_preview=false
+
+Успешный ответ (200):
+HTTP/1.1 200
+Content-Type: image/jpeg
+
+<image_binary>
+
+Чат не найден (404):
+{
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "error_description": "Chat with specified id not found"
+  }
+}
+
+Ошибка messaging-сервиса при запросе чата (500):
+{
+  "status": "error",
+  "reason": "error_from_messaging_service",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "reason": "some_error",
+    "error_description": "Chat info fetching failed. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Метаданные файла не найдены (404):
+{
+  "status": "error",
+  "reason": "file_metadata_not_found",
+  "errors": [],
+  "error_data": {
+    "file_id": "e48c5612-b94f-4264-adc2-1bc36445a226",
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "error_description": "File with specified file_id and group_chat_id not found in file service"
+  }
+}
+
+Файл-сервис вернул ошибку при запросе метаданных файла (500):
+{
+  "status": "error",
+  "reason": "error_from_file_service",
+  "errors": [],
+  "error_data": {
+    "file_id": "e48c5612-b94f-4264-adc2-1bc36445a226",
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "reason": "some_error",
+    "error_description": "File metadata fetching failed. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Файл удален (204):
+{
+  "status": "error",
+  "reason": "file_deleted",
+  "errors": [],
+  "error_data": {
+    "link": "/uploads/files/b9197d3a-d855-5d34-ba8a-eff3a975ab20/c6e39e617aee4613bd0d6a47738b6368.jpeg?v=1627067439978",
+    "error_description": "File at the specified link has been deleted"
+  }
+}
+
+Ошибка при скачивании файла (500):
+{
+  "status": "error",
+  "reason": "file_download_failed",
+  "errors": [],
+  "error_data": {
+    "link": "/uploads/files/b9197d3a-d855-5d34-ba8a-eff3a975ab20/c6e39e617aee4613bd0d6a47738b6368.jpeg?v=1627067439978",
+    "error_description": "Got error on file downloading. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Ошибка при скачивании файла из s3 файл-сервиса (500):
+{
+  "status": "error",
+  "reason": "error_from_s3_file_service",
+  "errors": [],
+  "error_data": {
+    "source_link": "/uploads/files/b9197d3a-d855-5d34-ba8a-eff3a975ab20/c6e39e617aee4613bd0d6a47738b6368.jpeg?v=1627067439978",
+    "location": "https://bucketexample.s3.amazonaws.com/E54SAFSA",
+    "error_description": "Got error on downloading file from s3 file service. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Файл не имеет preview (400):
+{
+  "status": "error",
+  "reason": "file_without_preview",
+  "errors": [],
+  "error_data": {
+    "file_id": "e48c5612-b94f-4264-adc2-1bc36445a226",
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "error_description": "Preview was requested but file doesn't have preview"
+  }
+}
+
+Загрузка файла
+Обрабатывается синхронно.
+Содержимое файла и параметры передается в формате multipart/form-data с boundary.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type: multipart/form-data; boundary=<boundary string>
+Параметры запроса:
+•	group_chat_id [UUID5] - идентификатор чата
+•	file_name [String] - имя файла. Берется из content
+•	mime_type [String] - mime-тип файла. Берется из content
+•	content [Binary] - бинарное содержимое файла
+•	meta [Object] - метаданные файла
+•	duration [Integer] (Default: null) - длительность видео/аудио в секундах
+•	caption [String] (Default: null) - caption файла
+Пример запроса:
+POST /api/v3/files/upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=4d9aa92c
+
+--4d9aa92c
+Content-Disposition: form-data; name="content"; filename="image.jpeg"
+Content-Type: image/jpeg
+
+<image binary>
+--4d9aa92c
+Content-Disposition: form-data; name="group_chat_id"
+
+d297a43f-e1c6-4e07-8081-e25c04364acc
+--4d9aa92c
+Content-Disposition: form-data; name="meta"
+Content-Type: application/json
+
+{
+  "duration": null,
+  "caption": "Мое видео"
+}
+--4d9aa92c--
+
+Успешный ответ (200):
+•	status [String] - “ok”
+•	result [Object]
+•	type [String] - “image”
+•	file [String] - ссылка на файл
+•	file_mime_type [String] - mime type файла
+•	file_name [String] - имя файла
+•	file_preview [String] (Default: null) - ссылка на превью
+•	file_preview_height [Integer] (Default: null) - высота файла в px
+•	file_preview_width [Integer] (Default: null) - ширина файла в px
+•	file_size [Integer] - размер файла
+•	file_hash [String] - хэш файла
+•	file_encryption_algo [String] - “stream”
+•	chunk_size [Integer] - размер чанков
+•	file_id [UUID5] - идентификатор файла
+•	caption [String] (Default: null) - caption файла
+•	duration [Integer] (Default: null) - длительность аудио/видео
+{
+  "status": "ok",
+  "result": {
+    "type": "image",
+    "file": "https://link.to/file",
+    "file_mime_type": "image/png",
+    "file_name": "pass.png",
+    "file_preview": "https://link.to/preview",
+    "file_preview_height": 300,
+    "file_preview_width": 300,
+    "file_size": 1502345,
+    "file_hash": "Jd9r+OKpw5y+FSCg1xNTSUkwEo4nCW1Sn1AkotkOpH0=",
+    "file_encryption_algo": "stream",
+    "chunk_size": 2097152,
+    "file_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "caption": "текст",
+    "duration": null
+  }
+}
+
+Чат не найден (404):
+{
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "error_description": "Chat with specified id not found"
+  }
+}
+
+Ошибка messaging-сервиса при запросе чата (500):
+{
+  "status": "error",
+  "reason": "error_from_messaging_service",
+  "errors": [],
+  "error_data": {
+    "group_chat_id": "84a12e71-3efc-5c34-87d5-84e3d9ad64fd",
+    "reason": "some_error",
+    "error_description": "Chat info fetching failed. Check BotX container logs (level :warn or upper) for more info."
+  }
+}
+
+Неправильный mimetype (500):
+{
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["invalid mimetype", "unsupported file type"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info."
+  }
+}
+
+Неподдерживаемый тип файла (500):
+{
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["unsupported file type"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info."
+  }
+}
+
+Сервис ключей (KDC) вернул ошибку при запросе ключа бота (500):
+{
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["sender public key fetching failed"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info."
+  }
+}
+
+Сервис ключей (KDC) вернул ошибку при запросе ключей получателей (500):
+{
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["recipients public keys fetching failed"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info."
+  }
+}
+
+Файл-сервис вернул ошибку при загрузке файла (500):
+{
+  "status": "error",
+  "reason": "flow_processing_error",
+  "errors": ["uploading file to file service failed", "file service error: some_error"],
+  "error_data": {
+    "error_description": "Got error on flow processing. Check BotX container logs (level :info or upper) for more info."
+  }
+}
+Stickers API
+Список методов
+Метод	URL	Описание
+GET	/api/v3/botx/stickers/packs	Получение списка наборов стикеров
+
+GET	/api/v3/botx/stickers/packs/:pack_id	Получение набора стикеров
+
+GET	/api/v3/botx/stickers/packs/:pack_id/stickers/:sticker_id	Получение стикера из набора стикеров
+
+POST	/api/v3/botx/stickers/packs	Создание набора стикеров
+
+POST	/api/v3/botx/stickers/packs/:pack_id/stickers	Добавление стикера в набор стикеров
+
+PUT	/api/v3/botx/stickers/packs/:pack_id	Редактирование набора стикеров
+
+DELETE	/api/v3/botx/stickers/packs/:pack_id	Удаление набора стикеров
+
+DELETE	/api/v3/botx/stickers/packs/:pack_id/stickers/:sticker_id	Удаление стикера из набора стикеров
+
+Получение списка наборов стикеров
+Обрабатывается синхронно.
+Для перемещения по списку используется пагинация.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huid [UUID] (Default: null) - уникальный идентификатор создателя набора(ов) стикеров
+•	limit [Integer] (Default: null) - максимальное количество наборов в списке
+•	after [String] (Default: null) - base64-строка с мета-информацией для перемещения по списку. Генерируется на стороне сервера. Содержится в ответе на каждый запрос в объекте pagination (см. пример успешного ответа).
+Пример запроса:
+?user_huid=84a12e71-3efc-5c34-87d5-84e3d9ad64fd&limit=10&after=ABCEoS5xPvxcNIfVhOPZrWT9AA0ACnVwZGF0ZWRfYXQAf____QAAAAA=
+
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+        "packs": [
+             {
+               "id": "26080153-a57d-5a8c-af0e-fdecee3c4435",
+               "name": "Sticker Pack",
+               "preview": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/9df3143975ad4e6d93bf85079fbb5f1d.png?v=1614781425296",
+               "public": true,
+               "stickers_count": 2,
+               "stickers_order": [
+                 "a998f599-d7ac-5e04-9fdb-2d98224ce4ff",
+                 "25054ac4-8be2-5a4b-ae00-9efd38c73fb7"
+               ],
+               "inserted_at": "2020-11-28T12:56:43.672163Z",
+               "updated_at": "2021-02-18T12:52:31.571133Z",
+               "deleted_at": null,
+             }
+        ],
+        "pagination": {
+            "after": "ABAmCAFTpX1ajK8O_ezuPEQ1AA0ACnVwZGF0ZWRfYXQAf____gAAAAA="
+       }
+    }
+  }
+
+Получение набора стикеров
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	pack_id [UUID] - уникальный идентификатор набора стикеров
+Пример запроса:
+/api/v3/botx/stickers/packs/26080153-a57d-5a8c-af0e-fdecee3c4435
+
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+      "id": "26080153-a57d-5a8c-af0e-fdecee3c4435",
+      "name": "Sticker Pack",
+      "public": true,
+      "preview": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/b4577728162f4d9ea2b35f25f9f0dcde.png?v=1626137130775",
+      "stickers_order": [
+        "528c3953-5842-5a30-b2cb-8a09218497bc",
+        "75bb24c9-7c08-5db0-ae3e-085929e80c54"
+      ],
+      "stickers": [
+        {
+          "id": "528c3953-5842-5a30-b2cb-8a09218497bc",
+          "emoji": "😀",
+          "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/e7a73cf1b6164b15bc46f21aacfa734f.png?v=1626137621017",
+          "inserted_at": "2020-12-28T12:56:43.672163Z",
+          "updated_at": "2020-12-28T12:56:43.672163Z",
+          "deleted_at": null
+        },
+        {
+          "id": "75bb24c9-7c08-5db0-ae3e-085929e80c54",
+          "emoji": "🤔",
+          "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/b4577728162f4d9ea2b35f25f9f0dcde.png?v=1626137130775",
+          "inserted_at": "2020-12-28T12:56:43.672163Z",
+          "updated_at": "2020-12-28T12:56:43.672163Z",
+          "deleted_at": null
+        }
+      ],
+      "inserted_at": "2020-12-28T12:56:43.672163Z",
+      "updated_at": "2020-12-28T12:56:43.672163Z",
+      "deleted_at": null
+    }
+  }  
+
+Получение стикера из набора стикеров
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	pack_id [UUID] - уникальный идентификатор набора стикеров
+•	sticker_id [UUID] - уникальный идентификатор стикера в наборе стикеров
+Пример запроса:
+/api/v3/botx/stickers/packs/26080153-a57d-5a8c-af0e-fdecee3c4435/stickers/528c3953-5842-5a30-b2cb-8a09218497bc
+
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+        "id": "528c3953-5842-5a30-b2cb-8a09218497bc",
+        "emoji": "😀",
+        "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/1a036cec0df042898540824717c5ac32.png?v=1607014055820",
+        "preview": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/c9bfcd8eb4224f7a98de28bdcbffc2b2.png?v=1610438587839"
+    }
+  } 
+
+Создание набора стикеров
+Обрабатывается синхронно.
+Создает только непубличные наборы стикеров (набор виден только на CTS с ботом).
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	name [String] - название набора стикеров
+•	user_huid [UUID] (Default: null) - huid создателя набора
+Пример запроса:
+{
+    "name": "Sticker Pack"
+}
+
+Пример успешного ответа (201):
+  {
+    "status": "ok",
+    "result": {
+        "id": "26080153-a57d-5a8c-af0e-fdecee3c4435",
+        "name": "Sticker Pack",
+        "public": false,
+        "preview": null,
+        "stickers": [],
+        "stickers_order": [],
+        "inserted_at": "2021-07-10T00:27:55.616703Z",
+        "updated_at": "2021-07-10T00:27:55.616703Z",
+        "deleted_at": null
+    }
+  } 
+
+Добавление стикера в набор стикеров
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	emoji [String] - эмодзи стикера
+•	image [String] - изображение стикера в base64-формате
+Пример запроса:
+{
+    "emoji": "🤔",
+    "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhE",
+}
+
+Пример успешного ответа (201):
+  {
+    "status": "ok",
+    "result": {
+        "id": "75bb24c9-7c08-5db0-ae3e-085929e80c54",
+        "emoji": "🤔",
+        "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/b4577728162f4d9ea2b35f25f9f0dcde.png?v=1626137130775",
+        "inserted_at": "2020-12-28T12:56:43.672163Z",
+        "updated_at": "2020-12-28T12:56:43.672163Z",
+        "deleted_at": null
+    }
+  } 
+
+Редактирование набора стикеров
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	name [String] - название набора стикеров
+•	preview [UUID] - уникальный идентификатор стикера из набора, выбранного в качестве превью
+•	stickers_order [Array[UUID]] - список идентификаторов стикеров набора в порядке их отображения. Для изменения порядка необходимо передавать весь список идентификаторов, в противном случае параметр игнорируется
+Пример запроса:
+{
+    "name": "Sticker Pack 2.0",
+    "preview": "75bb24c9-7c08-5db0-ae3e-085929e80c54",
+    "stickers_order": ["75bb24c9-7c08-5db0-ae3e-085929e80c54", "528c3953-5842-5a30-b2cb-8a09218497bc"]
+}
+
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+      "id": "26080153-a57d-5a8c-af0e-fdecee3c4435",
+      "name": "Sticker Pack 2.0",
+      "public": true,
+      "preview": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/b4577728162f4d9ea2b35f25f9f0dcde.png?v=1626137130775",
+      "stickers_order": [
+        "75bb24c9-7c08-5db0-ae3e-085929e80c54",
+        "528c3953-5842-5a30-b2cb-8a09218497bc"
+      ],
+      "stickers": [
+        {
+          "id": "75bb24c9-7c08-5db0-ae3e-085929e80c54",
+          "emoji": "🤔",
+          "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/b4577728162f4d9ea2b35f25f9f0dcde.png?v=1626137130775",
+          "inserted_at": "2020-12-28T12:56:43.672163Z",
+          "updated_at": "2020-12-28T12:56:43.672163Z",
+          "deleted_at": null
+        },
+        {
+          "id": "528c3953-5842-5a30-b2cb-8a09218497bc",
+          "emoji": "😀",
+          "link": "/uploads/sticker_pack/26080153-a57d-5a8c-af0e-fdecee3c4435/e7a73cf1b6164b15bc46f21aacfa734f.png?v=1626137621017",
+          "inserted_at": "2020-12-28T12:56:43.672163Z",
+          "updated_at": "2020-12-28T12:56:43.672163Z",
+          "deleted_at": null
+        }
+      ],
+      "inserted_at": "2020-12-28T12:56:43.672163Z",
+      "updated_at": "2021-07-22T13:26:41.562143Z",
+      "deleted_at": null
+    }
+  } 
+
+Удаление набора стикеров
+Обрабатывается асинхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	pack_id [UUID] - уникальный идентификатор набора стикеров
+Пример запроса:
+/api/v3/botx/stickers/packs/26080153-a57d-5a8c-af0e-fdecee3c4435
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": "delete_sticker_pack_pushed"
+  } 
+
+Удаление стикера из набора стикеров
+Обрабатывается асинхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса: - pack_id [UUID] - уникальный идентификатор набора стикеров - sticker_id [UUID] - уникальный идентификатор стикера из набора стикеров
+Пример запроса:
+/api/v3/botx/stickers/packs/26080153-a57d-5a8c-af0e-fdecee3c4435/stickers/528c3953-5842-5a30-b2cb-8a09218497bc
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": "delete_sticker_from_pack_pushed"
+  } 
+OpenID API
+Список методов
+Метод	URL	Описание
+POST	/api/v3/botx/openid/refresh_access_token	Обновление access_token
+
+Обновление access_token
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huid [UUID] - user_huid пользователя, чей токен будет обновляться
+•	ref [UUID] (Default: null) - sync_id события с командой, которую не удалось выполнить, для последующего повтора отправки. Если обновление токена происходит не в результате выполнения команды, то параметр не указывается
+Пример параметров запроса:
+  {
+    "user_huid": "a465f0f3-1354-491c-8f11-f400164295cb",
+    "ref": "a465f0f3-1354-491c-8f11-f400164295cb"
+  }
+
+Пример успешного ответа (202):
+  {
+    "status": "ok",
+    "result": true
+  }
+
+Ошибка от messaging сервиса (400):
+  {
+    "status": "error",
+    "reason": "error_from_messaging_service",
+    "errors": [],
+    "error_data": {
+      "error": "some_error",
+      "error_description": "Got error from Messaging service. Check BotX container logs (level :warn or upper) for more info."
+    }
+  }
+
+Непредвиденная ошибка (503):
+  {
+    "status": "error",
+    "reason": "unexpected_error",
+    "errors": [],
+    "error_data": {
+      "error_description": "Got unexpected error. Check BotX container logs (level :error or upper) for more info."
+    }
+  }
+Metrics API
+Список методов
+Метод	URL	Описание
+POST	/api/v3/botx/metrics/bot_function	Добавить новое использование функционала
+
+Добавить новое использование функционала
+Обрабатывается асинхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	user_huids [Array[UUID]] - массив user_huid, участвующих в использовании фукнционала
+•	group_chat_id [UUID] - ID чата, в котором использовалcя функционал
+•	bot_function [String] - имя использованного функционала
+Пример параметров запроса:
+  {
+    "user_huids": ["a465f0f3-1354-491c-8f11-f400164295cb"],
+    "group_chat_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+    "bot_function": "email_sent"
+  }
+
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": true
+  }
+VoEx API
+Список методов
+Метод	URL	Описание
+GET	/api/v3/botx/voex/conferences/:call_id	Получить информацию о конференции
+
+GET	/api/v3/botx/voex/calls/:call_id	Получить информацию о звонке
+
+Получить информацию о конференции
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	call_id [UUID] - идентификатор конференции
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+      "call_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+      "link": "https://example.com/join",
+      "members": [
+        "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+        "6fa5f1e9-1453-0ad7-2d6d-b791467e382a"
+      ],
+      "name": "Test Conference"
+    }
+  }
+
+Получить информацию о звонке
+Обрабатывается синхронно.
+Заголовки:
+•	authorization - "Bearer <token>"
+•	content-type - "application/json"
+Параметры запроса:
+•	call_id [UUID] - идентификатор звонка
+Пример успешного ответа (200):
+  {
+    "status": "ok",
+    "result": {
+      "call_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+      "members": [
+        "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+        "6fa5f1e9-1453-0ad7-2d6d-b791467e382a"
+      ]
+    }
+  }
+Платформа BotX: HTTP(s) Bot API v4
+HTTP(S)-интерфейс бота (v4)
+Для использования ботом 4-й версии протокола необходимо на странице бота в консоли администратора указать у атрибута "Версия протокола" значение "4".
+В случае отсутствия метода интерфейса в указанной версии используется его предыдущая версия.
+Метод	URL	Описание
+POST	/command	Обработка команд
+
+POST	/notification/callback	Обработка результата отправки бот-сообщения
+
+POST	/smartapps/request	Синхронный запрос данных у Smartapp
+
+GET	/smartapp_files/static/{path*}	Отдача статических файлов Smartapp-приложения
+
+GET	/status	Передача статуса и списка команд (метод из Bot API v3)
+
+Аутентификация
+Для верификации запроса используется JWT (JSON Web Token), который передается BotX, в запросе к боту, в заголовке authorization. При каждом запросе генерируется новый, уникальный токен.
+Для верификации запроса бот должен проверить подпись JWT используя свой secret_key.
+•	Алгоритм - HS256
+•	Secret key - secret_key бота в UTF-8 (без base64 кодирования)
+Payload токена (claims):
+•	iss - уникальный идентификатор стороны, генерирующей токен (issuer). В качестве значения указан хост BotX (FQDN) с которого отправлен запрос
+•	aud - массив чувствительных к регистру строк, являющийся списком получателей данного токена (audience). В качестве значения указан ID бота
+•	exp - время в формате Unix Time, определяющее момент, когда токен станет невалидным (expiration). В качестве значения + 60 секунд от времени генерации
+•	nbf - время в формате Unix Time, определяющее момент, когда токен стал валидным (not before). Равен iat
+•	jti - строка, определяющая уникальный идентификатор данного токена (JWT ID)
+•	iat - время в формате Unix Time, определяющее момент, когда токен был создан (issued at)
+Пример payload:
+{
+  "aud": ["49eac56a-c0d8-51d7-863e-925028f05110"],
+  "exp": 1672095627,
+  "iat": 1672095567,
+  "iss": "cts.ccsteam.ru",
+  "jti": "2sq7k3qaahe2gt8poo004ak4",
+  "nbf": 1672095567
+}
+
+Рекомендации:
+•	реализовать отбрасывание неподписанных (с отсутствующей подписью) JWT;
+•	реализовать проверку, что запрос пришел с того же хоста, что указан в iss параметре;
+•	получать secret_key бота по идентификатору из aud параметра;
+•	реализовать проверку, что срок жизни токена (параметр exp) не истек.
+Обработка команд
+Обрабатывается асинхронно.
+Заголовки:
+•	authorization - "Bearer {token}"
+Параметры запроса:
+•	sync_id [UUID] - идентификатор сообщения в системе Express
+•	source_sync_id [UUID] (Default: null) - идентификатор исходного сообщения (сообщения в котором находились элементы интерфейса) в системе Express
+•	command [Object]
+•	body [String] - тело команды
+•	command_type [String] - тип команды (user|system)
+•	data [Object] - данные команды полученные на основе введеных пользователем данных через элементы UI или при нажатие на кнопку
+•	metadata [Object] - метаданные заложенные в объекте сообщения от бота
+•	attachments [Array[Object]] - вложения, переданные в сообщении. Например: изображения, видео, файлы, ссылки, геолокации, контакты
+•	type [String] - тип вложения
+•	data [Object] - объект с данными вложения
+•	from [Object]
+•	user_huid [UUID] (Default: null) - huid юзера который отправил команду
+•	group_chat_id [UUID] (Default: null) - id чата в который отправили команда
+•	chat_type [String] (Default: null) - тип чата (chat|group_chat|channel)
+•	ad_login [String] (Default: null) - логин юзера который отправил команду
+•	ad_domain [String] (Default: null) - домен юзера который отправил команду
+•	username [String] (Default: null) - имя юзера который отправил команду
+•	is_admin [Boolean] (Default: null) - является ли юзер админом чата
+•	is_creator [Boolean] (Default: null) - является ли юзер создателем чата
+•	manufacturer [String] (Default: null) - имя бренда производителя
+•	device [String] (Default: null) - название девайса
+•	device_software [String] (Default: null) - ОС девайса
+•	device_meta [Object] (Default: null)
+•	pushes [Boolean] - разрешение приложению на отправку пушей
+•	timezone [String] - таймзона пользователя
+•	permissions [Object] - различные разрешения приложения (использование микрофона, камеры и т.д.)
+•	platform [String] (Default: null) - название клиентской платформы (web|android|ios|desktop)
+•	platform_package_id [String] (Default: null) - идентификатор пакета с данными приложения и устройства
+•	app_version [String] (Default: null) - версия приложения Express
+•	locale [String] (Default: null) - локаль текущей сессии
+•	host [String] - имя хоста с которого пришла команда
+•	async_files [Array[Object]] - метаданные файлов для отложенной обработки
+•	type [String] - тип файла, один из: "image", "video", "document", "voice"
+•	file [String] - ссылка на файл
+•	file_mime_type [String] - mimetype файла
+•	file_name [String] - имя файла
+•	file_preview [String] (Default: Null) - ссылка на превью
+•	file_preview_height [Integer] (Default: Null) - высота превью в px
+•	file_preview_width [Integer] (Default: Null) - ширина превью в px
+•	file_size [Integer] - размер файла в байтах
+•	file_hash [String] - хэш файла
+•	file_encryption_algo [String] - "stream"
+•	chunk_size [Integer] - размер чанков
+•	file_id [UUID] - ID файла
+•	duration [Integer] (Default: Null) - длительность видео/аудио
+•	caption [String] (Default: Null) - подпись под файлом
+•	bot_id [UUID] - идентификатор бота в системе Express
+•	proto_version [Integer] - версия протокола (BotX -> Bot) используемая при отправке команды
+•	entities [Array[Object]] - особые сущности переданные в сообщении. Например: меншны, хэштеги, ссылки, форварды
+•	type [String] - тип сущности
+•	data [Object] - объект с данными сущности
+Пример запроса:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "/doit #6",
+    "command_type": "user",
+    "data": {},
+    "metadata": {"account_id": 94}
+  },
+  "attachments": [
+    {
+      "type": "image",
+      "data": {
+        "content": "data:image/jpg;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+        "file_name": "image.jpg",
+      }
+    }
+  ],
+  "async_files": [],
+  "from": {
+    "user_huid": "ab103983-6001-44e9-889e-d55feb295494",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": "example_login",
+    "ad_domain": "example.com",
+    "username": "Bob",
+    "is_admin": true,
+    "is_creator": true,
+    "chat_type": "group_chat",
+    "host": "cts.ccteam.ru",
+    "app_version": "1.21.11",
+    "device": "Chrome 92.0",
+    "device_software": "macOS 10.15.7",
+    "device_meta": {
+      "permissions": {"microphone": true, "notifications": true},
+      "pushes": false,
+      "timezone": "Europe/Samara"
+    },
+    "platform": "web",
+    "locale": "en",
+    "manufacturer": "Google",
+    "platform_package_id": "ru.unlimitedtech.express"  
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "entities": [
+    {
+      "type": "mention",
+      "data": {
+        "mention_type": "contact",
+        "mention_id": "c06a96fa-7881-0bb6-0e0b-0af72fe3683f",
+        "mention_data": {
+          "user_huid": "ab103983-6001-44e9-889e-d55feb295494",
+          "name": "Вася Иванов",
+          "conn_type": "cts"
+        }
+      }
+    }
+  ]
+}
+
+HTTP-статус ответа
+202
+Параметры ответа
+Успешный ответ:
+•	Не имеет значения
+Ошибка (Бот отключен):
+•	reason - причина ошибки. Значение должно быть bot_disabled;
+•	error_data - объект с данными об ошибке. Должен включать в себя ключ status_message.
+Пример ответа
+Успешный ответ:
+•	http status: 202
+{
+  "result": "accepted"
+}
+
+Ошибка (Бот отключен):
+•	http status: 503
+{
+  "reason": "bot_disabled",
+  "error_data": {"status_message": "please stand by"},
+  "errors": []
+}
+
+Системные команды
+BotX отправляет системные команды после некоторых операций.
+Системные команды имеют зарезервированное пространство имен system:.
+Системные команды отправляются от лица сервера и в них отсутствуют данные, относящиеся к конкретному пользователю и его устройству, например:
+•	open_id_access_token
+•	pds_token
+•	ad_login, ad_domain, device, locale
+•	и пр.
+chat_created
+Событие отправляется при создание чата.
+Название: system:chat_created.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	group_chat_id [UUID5] - uuid чата
+•	chat_type [String] - тип чата
+•	name [String] - имя чата
+•	creator [UUID5] - huid создателя чата
+•	members [Array[Object]]
+•	huid [UUID5] - huid участника
+•	name [String] - имя участника
+•	user_kind [String] - тип участника
+•	admin [Boolean] - является/не является админом
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:chat_created",
+    "data": {
+      "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+      "chat_type": "group_chat",
+      "name": "Meeting Room",
+      "creator": "ab103983-6001-44e9-889e-d55feb295494",
+      "members": [
+        {
+          "huid": "ab103983-6001-44e9-889e-d55feb295494",
+          "name": "Bob",
+          "user_kind": "user",
+          "admin": true
+        },
+       {
+          "huid": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+          "name": "Funny Bot",
+          "user_kind": "botx",
+          "admin": false
+        }
+      ]
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+added_to_chat
+Событие отправляется при добавление участников в чат.
+Название: system:added_to_chat.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	added_members [Array[UUID5]] - список добавленных мемберов
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:added_to_chat",
+    "data": {
+      "added_members": [
+        "ab103983-6001-44e9-889e-d55feb295494",
+        "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+      ]
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+deleted_from_chat
+Событие отправляется при удалении администратором участников чата.
+Название: system:deleted_from_chat.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	deleted_members [Array[UUID5]] - список идентификаторов удаленных пользователей
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:deleted_from_chat",
+    "data": {
+      "deleted_members": [
+        "ab103983-6001-44e9-889e-d55feb295494",
+        "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+      ]
+    },
+    "command_type": "system"
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+left_from_chat
+Событие отправляется при выходе участников из чата.
+Название: system:left_from_chat.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	"left_members": [[Array[UUID5]] - список идентификаторов покинувших чат пользователей
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:left_from_chat",
+    "data": {
+      "left_members": [
+        "ab103983-6001-44e9-889e-d55feb295494",
+        "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4"
+      ]
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+smartapp_event
+Событие отправляется клиентом при взаимодействии со SmartApp-приложением.
+Название: system:smartapp_event.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	ref [UUID] - уникальный идентификатор запроса
+•	smartapp_id [UUID] - ID SmartApp
+•	data [Object] - пользовательские данные
+•	opts [Object] - опции запроса
+•	smartapp_api_version [Integer] - версия протокола smartapp <-> bot
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:smartapp_event",
+    "data": {
+        "ref": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+        "smartapp_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+        "data": {
+            "url": "example.com",
+            "method": "POST",
+            "headers": {
+                "key": "value"
+            },
+            "body": "XawLhuWPa8ThvXzGo1R3SlnMxo0R8+H7JRC6Y5UkpHA="
+        },
+        "opts": {},
+        "smartapp_api_version": 1
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": false,
+    "is_creator": false,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+Пример (вместе с вложением/файлом):
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:smartapp_event",
+    "data": {
+        "ref": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+        "smartapp_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+        "data": {
+            "url": "example.com",
+            "method": "POST",
+            "headers": {
+                "key": "value"
+            },
+            "body": "XawLhuWPa8ThvXzGo1R3SlnMxo0R8+H7JRC6Y5UkpHA="
+        },
+        "opts": {},
+        "smartapp_api_version": 1
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "attachments": [
+    {
+      "type": "image",
+      "data": {
+        "content": "data:image/jpg;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+        "file_name": "image.jpg",
+      }
+    },
+    {
+      "type": "link",
+      "data": {
+        "url": "http://ya.ru/xxx",
+        "url_title": "Header in link",
+        "url_preview": "http://ya.ru/xxx.jpg",
+        "url_text": "Some text in link"
+      }
+    }
+  ],
+  "async_files": [],
+  "entities": [],
+  "from": {
+    "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": false,
+    "is_creator": false,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+Пример (вместе с метаданными файла async_files):
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:smartapp_event",
+    "data": {
+        "ref": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+        "smartapp_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+        "data": {
+            "url": "example.com",
+            "method": "POST",
+            "headers": {
+                "key": "value"
+            },
+            "body": "XawLhuWPa8ThvXzGo1R3SlnMxo0R8+H7JRC6Y5UkpHA="
+        },
+        "opts": {},
+        "smartapp_api_version": 1
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "attachments": [],
+  "entities": [],
+  "async_files": [
+    {
+      "type": "image",
+      "file": "https://link.to/file",
+      "file_mime_type": "image/png",
+      "file_name": "pass.png",
+      "file_preview": "https://link.to/preview",
+      "file_preview_height": 300,
+      "file_preview_width": 300,
+      "file_size": 1502345,
+      "file_hash": "Jd9r+OKpw5y+FSCg1xNTSUkwEo4nCW1Sn1AkotkOpH0=",
+      "file_encryption_algo": "stream",
+      "chunk_size": 2097152,
+      "file_id": "8dada2c8-67a6-4434-9dec-570d244e78ee"
+    }
+  ],
+  "from": {
+    "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": false,
+    "is_creator": false,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+internal_bot_notification
+Событие отправляется чат-ботом при взаимодействии с другими чат-ботами.
+Название: system:internal_bot_notification.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	data [Object] - пользовательские данные
+•	opts [Object] - опции запроса
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:internal_bot_notification",
+    "data": {
+      "data": {
+        "message": "ping",
+      },
+      "opts": {
+        "internal_token": "KyKfLJD1zMjNSJ1cQ4+8Lz"    
+      }
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "group_chat",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": false,
+    "is_creator": false,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+cts_login
+Событие отправляется при успешном логине пользователя на CTS.
+Название: system:cts_login.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	user_huid [UUID5] - huid пользователя
+•	cts_id [UUID5] - id сервера, на который был произведен логин
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:cts_login",
+    "data": {
+      "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+      "cts_id": "8dada2c8-67a6-4434-9dec-570d244e78ee"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": null,
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": null,
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+cts_logout
+Событие отправляется при успешном выходе пользователя с CTS.
+Название: system:cts_logout.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	user_huid [UUID5] - huid пользователя
+•	cts_id [UUID5] - id сервера, с которого был произведен выход
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:cts_logout",
+    "data": {
+      "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+      "cts_id": "8dada2c8-67a6-4434-9dec-570d244e78ee"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": null,
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": null,
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+event_edit
+Событие отправляется при редактировании сообщения пользователем.
+Название: system:event_edit.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	body [String] (Optional) - обновленное тело сообщения
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:event_edit",
+    "data": {
+      "body": "Edited"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [
+    {
+      "content": "data:image/jpg;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+      "file_name": "image.jpg",
+    }
+  ],
+  "entities": [],
+  "from": {
+    "user_huid": "b9197d3a-d855-5d34-ba8a-eff3a975ab20",
+    "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": null,
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+chat_deleted_by_user
+Событие отправляется при удалении чата пользователем (чат не удаляется на сервере, только скрывается на устройстве).
+Название: system:chat_deleted_by_user.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	group_chat_id [UUID] - id удалённого чата
+•	user_huid [UUID] - пользователь, удаливший чат
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:chat_deleted_by_user",
+    "data": {
+      "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+      "user_huid": "37b821f5-a2be-5dc1-b107-87807ce97e56"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": null,
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+conference_created
+Событие отправляется при создании конференции с ботом или добавлении бота в существующую.
+Название: system:conference_created.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	call_id [UUID] - id конференции
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:conference_created",
+    "data": {
+      "call_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "voex_call",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+conference_deleted
+Событие отправляется при удалении конференции с ботом или удалении бота из существующей.
+Название: system:conference_deleted.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	call_id [UUID] - id конференции
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:conference_deleted",
+    "data": {
+      "call_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "voex_call",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+call_started
+Событие отправляется при начале звонка или конференции с ботом.
+Название: system:call_started.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	call_id [UUID] - id конференции
+•	call_type [String] - тип звонка (voex_room|voex_call)
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:call_started",
+    "data": {
+      "call_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+      "call_type": "voex_room"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "voex_call",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+call_ended
+Событие отправляется при окончании звонка или конференции с ботом.
+Название: system:call_ended.
+Параметры: см. пункт "Обработка команд".
+Вложенные данные (поле command["data"]):
+•	call_id [UUID] - id конференции
+•	call_type [String] - тип звонка (voex_room|voex_call)
+Пример:
+{
+  "sync_id": "a465f0f3-1354-491c-8f11-f400164295cb",
+  "command": {
+    "body": "system:call_ended",
+    "data": {
+      "call_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+      "call_type": "voex_room"
+    },
+    "command_type": "system",
+    "metadata": {}
+  },
+  "async_files": [],
+  "attachments": [],
+  "entities": [],
+  "from": {
+    "user_huid": null,
+    "group_chat_id": "6fa5f1e9-1453-0ad7-2d6d-b791467e382a",
+    "ad_login": null,
+    "ad_domain": null,
+    "username": null,
+    "chat_type": "voex_call",
+    "manufacturer": null,
+    "device": null,
+    "device_software": null,
+    "device_meta": {},
+    "platform": null,
+    "platform_package_id": null,
+    "is_admin": null,
+    "is_creator": null,
+    "app_version": null,
+    "locale": "en",
+    "host": "cts.ccteam.ru"
+  },
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "proto_version": 4,
+  "source_sync_id": null
+}
+
+Типы Attachments
+image
+Пример:
+{
+  "type": "image",
+  "data": {
+    "content": "data:image/jpg;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "file_name": "image.jpg",
+    }
+}
+
+Описание data-полей:
+•	content [String] - содержимое файла в формате data URL + base64 data (RFC 2397)
+•	file_name [String] (Optional) - имя файла
+video
+Пример:
+{
+  "type": "video",
+  "data": {
+    "content": "data:video/mp4;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "file_name": "video.mp4",
+    "duration": 100
+    }
+}
+
+Описание data-полей:
+•	content [String] - содержимое файла в формате data URL + base64 data (RFC 2397)
+•	file_name [String] (Optional) - имя файла
+•	duration [Integer] - длительность воспроизведения
+document
+Пример:
+{
+  "type": "document",
+  "data": {
+    "content": "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "file_name": "document.docx",
+    }
+}
+
+Описание data-полей:
+•	content [String] - содержимое файла в формате data URL + base64 data (RFC 2397)
+•	file_name [String] (Optional) - имя файла
+voice
+Пример:
+{
+  "type": "voice",
+  "data": {
+    "content": "data:audio/mpeg;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8=",
+    "duration": 100
+    }
+}
+
+Описание data-полей:
+•	content [String] - содержимое файла в формате data URL + base64 data (RFC 2397)
+•	duration [Integer] - длительность воспроизведения
+location
+Пример:
+{
+  "type": "location",
+  "data": {
+    "location_name": "Центр вселенной",
+    "location_address": "Россия, Тверская область",
+    "location_lat": 58.04861,
+    "location_lng": 34.28833,
+    }
+}
+
+Описание data-полей:
+•	location_name [String] - название местоположения
+•	location_address [String] - адрес
+•	location_lat [String] - широта
+•	location_lng [String] - долгота
+contact
+Пример:
+{
+  "type": "contact",
+  "data": {
+    "file_name": "Контакт",
+    "contact_name": "Иванов Иван",
+    "content": "data:text/vcard;base64,eDnXAc1FEUB0VFEFctII3lRlRBcetROeFfduPmXxE/8="
+  }
+}
+
+Описание data-полей:
+•	content [String] - содержимое файла в формате data URL + base64 data (RFC 2397)
+•	file_name [String] - имя файла
+•	contact_name [String] - имя контакта
+link
+Пример:
+{
+  "type": "link",
+  "data": {
+    "url": "http://ya.ru/xxx",
+    "url_title": "Header in link",
+    "url_preview": "http://ya.ru/xxx.jpg",
+    "url_text": "Some text in link"
+    }
+}
+
+Описание data-полей:
+•	url [String] - URL ссылки
+•	url_title [String] - заголовок
+•	url_preview [String] - URL изображения для предварительного просмотра ссылки
+•	url_text [String] - текст ссылки
+sticker
+Пример:
+{
+  "type": "sticker",
+  "data": {
+    "id": "ab103983-6001-44e9-889e-d55feb295494",
+    "link": "https://cts1dev.ccsteam.ru/uploads/sticker_pack/c06a96fa-7881-0bb6-0e0b-0af72fe3683f/d78fd455d32544a88167d4fe592615b0.png?v=1641977923967",
+    "pack": "c06a96fa-7881-0bb6-0e0b-0af72fe3683f",
+    "version": 1640076750
+    }
+}
+
+Описание data-полей:
+•	id [UUID] - id стикера
+•	link [String] - ссылка на стикер
+•	pack [UUID] - id стикерпака
+•	version [Integer] - версия файла
+Типы Entities
+mention
+Пример:
+{
+  "type": "mention",
+  "data": {
+    "mention_type": "contact",
+    "mention_id": "c06a96fa-7881-0bb6-0e0b-0af72fe3683f",
+    "mention_data": {
+      "user_huid": "ab103983-6001-44e9-889e-d55feb295494",
+      "name": "Вася Иванов",
+      "conn_type": "cts"
+    }
+  }
+}
+
+Описание data-полей:
+•	mention_type [String] - тип mention (contact|chat|channel|user|all)
+•	mention_id [UUID] - id mention используемого при подстановке в текст
+•	mention_data [Object]
+для mention_type "all" - {}
+для mention_type "contact|user":
+•	user_huid [UUID] - huid контакта
+•	name [String] - имя контакта
+•	conn_type [String] - тип соединения контакта
+для mention_type "chat|channel":
+•	group_chat_id [UUID] - id чата
+•	name [String] - имя чата
+forward
+Пример:
+{
+  "type": "forward",
+  "data": {
+    "group_chat_id": "918da23a-1c9a-506e-8a6f-1328f1499ee8",
+    "sender_huid": "c06a96fa-7881-0bb6-0e0b-0af72fe3683f",
+    "forward_type": "chat",
+    "source_chat_name": "Simple Chat",
+    "source_sync_id": "a7ffba12-8d0a-534e-8896-a0aa2d93a434",
+    "source_inserted_at": "2020-04-21T22:09:32.178Z"
+  }
+}
+
+Описание data-полей:
+•	group_chat_id [UUID] - id чата откуда переслали сообщение
+•	sender_huid [UUID] - huid автора сообщения
+•	forward_type [String] - chat|channel
+•	source_chat_name [String] (Optional) - имя чата откуда переслали сообщение
+•	source_sync_id [UUID] - sync_id пересылаемого сообщения
+•	source_inserted_at [DateTime] - ts пересылаемого сообщения
+reply
+Пример:
+{
+  "type": "reply",
+  "data": {
+    "source_sync_id": "a7ffba12-8d0a-534e-8896-a0aa2d93a434",
+    "sender": "c06a96fa-7881-0bb6-0e0b-0af72fe3683f",
+    "body": "все равно документацию никто не читает...",
+    "mentions": [],
+    "attachment": null,
+    "reply_type": "chat",
+    "source_group_chat_id": "918da23a-1c9a-506e-8a6f-1328f1499ee8",
+    "source_chat_name": "Serious Dev Chat",
+  }
+}
+
+Описание data-полей:
+•	source_sync_id [UUID] - sync_id исходного сообщения
+•	sender [UUID] - huid автора сообщения
+•	body [String] - текст исходного сообщения
+•	mentions [Array[Mention]] - меншены исходного сообщения
+•	attachment [Attachment] - вложение исходного сообщения
+•	reply_type [String] - chat|botx|group_chat|channel
+•	source_group_chat_id [UUID] (Optional) - ID чата откуда переслали сообщение
+•	source_chat_name [String] (Optional) - имя чата откуда переслали сообщение
+Обработка результата отправки бот-сообщения
+Обрабатывается асинхронно.
+Заголовки:
+•	Authorization - "Bearer {token}"
+Параметры запроса
+Успешный результат:
+•	sync_id [UUID5] - sync id отправляемого сообщения
+•	status [String] - "ok"
+•	result [Object] (Default: {}) - результат успешного запроса
+Пример:
+{
+  "sync_id": "a7ffba12-8d0a-534e-8896-a0aa2d93a434",
+  "status": "ok",
+  "result": {}
+}
+
+Ошибка во время отправки:
+•	sync_id [UUID5] - sync id отправляемого сообщения
+•	status [String] - "error"
+•	reason [String] - краткая/общая причина ошибки
+•	errors [Array[String]] (Default: []) - детальное описание ошибки/ошибок
+•	error_data [Object] (Default: {}) - метаданные ошибки
+Пример:
+{
+  "sync_id": "a7ffba12-8d0a-534e-8896-a0aa2d93a434",
+  "status": "error",
+  "reason": "chat_not_found",
+  "errors": ["chat with specified id not found"],
+  "error_data": {"group_chat_id": "918da23a-1c9a-506e-8a6f-1328f1499ee8"}
+}
+Синхронный запрос данных у SmartApp
+Обрабатывается синхронно.
+Параметры запроса:
+•	bot_id [UUID]
+•	group_chat_id [UUID]
+•	sender_info [Object]
+•	user_huid [UUID]
+•	platform [String]
+•	udid [UUID]
+•	method [String]
+•	payload [Object] (default: null)
+Пример запроса:
+{
+  "bot_id": "dcfa5a7c-7cc4-4c89-b6c0-80325604f9f4",
+  "group_chat_id": "8dada2c8-67a6-4434-9dec-570d244e78ee",
+  "sender_info": {
+    "user_huid": "ab103983-6001-44e9-889e-d55feb295494",
+    "platform": "web",
+    "udid": "49eac56a-c0d8-51d7-863e-925028f05110"
+  },
+  "method": "list.get",
+  "payload": {
+    "ref": "6fafda2c-6505-57a5-a088-25ea5d1d0364",
+    "data": {"category_id": 1},
+    "files": [
+      {
+        "file": "/uploads/files/3b1ee528-385e-0fb4-3bf5-62e9d72e4667/b0232da0bf3d406eb5653e37b2bb6517.bin?v=1713362406740",
+        "file_name": "cts1-test.ast-innovation.ru.har",
+        "file_size": 349372,
+        "file_hash": "qVSzEUJITWP+TgCvcF3UCzQrBaY3RHqB92CHObz4E70=",
+        "file_mime_type": "application/octet-stream",
+        "chunk_size": 2097152,
+        "file_encryption_algo": "stream",
+        "file_id": "a0ec914f-8235-5021-9b8d-05c3cd303536",
+        "type": "document"
+      }
+    ]
+  },
+}
+
+Параметры ответа:
+•	status [String] - ok | error
+•	result [Any]
+Пример успешного ответа:
+{
+  "status": "ok",
+  "result": {
+    "data": {
+      "document_id": 1,
+      "name": "Document_1"
+    },
+    "files": []
+  }
+}
+
+Пример неуспешного ответа (404):
+{
+  "status": "error",
+  "reason": "document_not_found",
+  "errors": [],
+  "error_data": {"document_id": 1}
+}
+
