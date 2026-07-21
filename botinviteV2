@@ -10,3 +10,5 @@
     bot_id = bot.bot_accounts[0].id
              ~~~~~~~~~~~~~~~~^^^
 TypeError: 'generator' object is not subscriptable
+
+для бота bot_id в env файле у меня есть EXPRESS_UUID
