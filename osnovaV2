@@ -1,27 +1,45 @@
-
-import json
-
 @collector.default_message_handler
 async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    chat_id = None
+    chat_name = "Неизвестный канал"
+    
     try:
-        # Превращаем объект сообщения в словарь (Pydantic или стандартный)
-        msg_dict = message.dict() if hasattr(message, "dict") else vars(message)
+        # Достаем оригинальный сырой запрос от платформы Express
+        raw_cmd = getattr(message, "raw_command", {})
         
-        # Конвертируем в красивый текст
-        debug_dump = json.dumps(msg_dict, indent=2, ensure_ascii=False, default=str)
+        # На всякий случай переводим в словарь, если библиотека вернула объект
+        if hasattr(raw_cmd, "dict"):
+            raw_cmd = raw_cmd.dict()
+        elif not isinstance(raw_cmd, dict):
+            raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
+            
+        # Идем в список entities
+        entities = raw_cmd.get("entities", [])
         
-        # Если есть сырой JSON от платформы (raw_command), достаем и его
-        raw_cmd = getattr(message, "raw_command", "Нет поля raw_command")
-        
-        reply_text = (
-            f"🕵️‍♂️ **Отладочная информация!**\n"
-            f"Вот как библиотека видит твое сообщение:\n\n"
-            f"```json\n{debug_dump}\n```\n\n"
-            f"RAW:\n`{raw_cmd}`"
-        )
-        
-        # Если текст слишком длинный, обрезаем, чтобы Express не выдал ошибку
-        await bot.answer_message(body=reply_text[:4000])
-        
+        for entity in entities:
+            # Тоже страхуемся от объектов
+            e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
+            
+            # Ищем mention типа chat или channel
+            if e_dict.get("type") == "mention":
+                data = e_dict.get("data", {})
+                if data.get("mention_type") in ("chat", "channel"):
+                    m_data = data.get("mention_data", {})
+                    chat_id = m_data.get("group_chat_id")
+                    chat_name = m_data.get("name", chat_name)
+                    break  # Нашли канал, выходим из цикла
+                    
     except Exception as e:
-        await bot.answer_message(body=f"Ошибка дебага: {e}")
+        await bot.answer_message(body=f"❌ Ошибка парсинга: {e}")
+        return
+
+    # Принимаем решение
+    if chat_id:
+        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
+        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
+        await bot.answer_message(body=result_msg)
+    else:
+        await bot.answer_message(
+            body="Я не нашел скрытую ссылку на канал в твоем сообщении.\n\n"
+                 "Убедись, что ты ввел `##имя` и **обязательно кликнул на канал из всплывающего списка**!"
+        )
