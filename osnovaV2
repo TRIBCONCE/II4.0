@@ -1,3 +1,53 @@
+
+@collector.default_message_handler
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    chat_id = None
+    chat_name = "Неизвестный канал"
+    
+    # Чтобы не зависеть от версии pybotx, переводим объект сообщения в обычный словарь (если можем)
+    msg_dict = message.dict() if hasattr(message, "dict") else {}
+    
+    # 1. Проверяем формат Bot API v4 (массив entities)
+    entities = msg_dict.get("entities") or getattr(message, "entities", [])
+    
+    for entity in entities:
+        # Pydantic-объекты превращаем в словари для простоты
+        e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
+        
+        if e_dict.get("type") == "mention":
+            data = e_dict.get("data", {})
+            if data.get("mention_type") in ("chat", "channel"):
+                m_data = data.get("mention_data", {})
+                chat_id = m_data.get("group_chat_id")
+                chat_name = m_data.get("name", chat_name)
+                break
+
+    # 2. Проверяем старый формат Bot API v3 (массив mentions) — резервный вариант
+    if not chat_id:
+        mentions = msg_dict.get("mentions") or getattr(message, "mentions", [])
+        for mention in mentions:
+            m_dict = mention.dict() if hasattr(mention, "dict") else (mention if isinstance(mention, dict) else {})
+            if m_dict.get("mention_type") in ("chat", "channel"):
+                m_data = m_dict.get("mention_data", {})
+                chat_id = m_data.get("group_chat_id")
+                chat_name = m_data.get("name", chat_name)
+                break
+
+    # 3. Принимаем решение
+    if chat_id:
+        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
+        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
+        await bot.answer_message(body=result_msg)
+    else:
+        # Если скрытого ID нет, значит пользователь просто написал текст
+        await bot.answer_message(
+            body="Я не нашел скрытую ссылку на канал в твоем сообщении.\n\n"
+                 "Убедись, что ты ввел `##имя` и **обязательно кликнул на канал из всплывающего синего списка**! "
+                 "Если просто набрать текст руками (даже с ##) и отправить, мессенджер передаст обычный текст без ID."
+        )
+
+
+
 # src/handlers/testhandlers.py
 
 import hmac
