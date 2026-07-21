@@ -1,21 +1,5 @@
-  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/handler_collector.py", line 118, in handle_bot_command
-    await message_handler(bot_command, bot)
-  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/handler.py", line 85, in __call__
-    await handler_func(message, bot)
-  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/middlewares/exception_middleware.py", line 34, in dispatch
-    raise message_handler_exc
-  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/middlewares/exception_middleware.py", line 30, in dispatch
-    await call_next(message, bot)
-  File "/app/src/handlers/testhandlers.py", line 32, in check_admin_handler
-    bot_id = bot.bot_accounts[0].id
-             ~~~~~~~~~~~~~~~~^^^
-TypeError: 'generator' object is not subscriptable
-
-для бота bot_id в env файле у меня есть EXPRESS_UUID
-
-Ошибка! Меня нет в этом канале, либо указан неверный ID.
-Системная ошибка: 'Bot' object has no attribute 'get_chat'
-
-я думаю что это из за того что нет Bearer Token в запросе get_chat он никде не указан может его тоже в env внести и потом в методе использовать
-Ошибка! Меня нет в этом канале, либо указан неверный ID.
-Системная ошибка: 'Bot' object has no attribute 'get_chat_info'
+##ИЗБРАННОЕ
+16:05
+Bot invite v2
+Я не нашел канал в твоем сообщении.
+Убедись, что ты используешь формат ##имяканала и выбираешь его из списка.
