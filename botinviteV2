@@ -1,6 +1,80 @@
-Пришли мне название целевого канала или группы в формате ##имяканала.
-Обязательно выбери нужный канал из всплывающей подсказки мессенджера!
-##ИЗБРАННОЕ
-
-Я не нашел скрытую ссылку на канал в твоем сообщении.
-Убедись, что ты ввел ##имя и обязательно кликнул на канал из всплывающего синего списка! Если просто набрать текст руками (даже с ##) и отправить, мессенджер передаст обычный текст без ID.
+ Отладочная информация!
+Вот как библиотека видит твое сообщение:
+{
+  "bot": "BotAccount(id=UUID('82c5d19e-ff68-509a-a189-f5ccf2bce9a3'), host='24.akbars.ru')",
+  "raw_command": {
+    "command": {
+      "data": {},
+      "metadata": {},
+      "body": "",
+      "command_type": "user"
+    },
+    "from": {
+      "device": "2061",
+      "host": "24.akbars.ru",
+      "username": "Бородин Егор Сергеевич",
+      "user_huid": "0c6bdb15-3d93-50b6-bb47-38c740ea673a",
+      "group_chat_id": "8eae0a8b-c2fb-002c-1ace-cd0bb2568e99",
+      "chat_type": "chat",
+      "ad_login": "borodines",
+      "ad_domain": "abb-win",
+      "manufacturer": "vivo",
+      "device_software": "Android 12 / SDK: 31",
+      "device_meta": {
+        "permissions": {
+          "contacts": true,
+          "microphone": true,
+          "notifications": true,
+          "storage": true
+        },
+        "pushes": true,
+        "timezone": "Europe/Moscow"
+      },
+      "platform": "android",
+      "platform_package_id": "ru.unlimitedtech.express",
+      "app_version": "3.67.34+release",
+      "locale": "ru",
+      "user_udid": "27944cee-19d6-48dc-8547-7194ea38c28b",
+      "is_admin": true,
+      "is_creator": true,
+      "source_server_id": "35bdc421-0b0e-5b32-b069-a8a4b8818da1"
+    },
+    "bot_id": "82c5d19e-ff68-509a-a189-f5ccf2bce9a3",
+    "sync_id": "859db123-943f-42a8-af5b-4bb7b4a648db",
+    "proto_version": 4,
+    "source_sync_id": null,
+    "entities": [
+      {
+        "data": {
+          "mention_data": {
+            "name": "ИЗБРАННОЕ",
+            "group_chat_id": "8470f9a5-c3fe-5a3a-94bc-e848b2fb9261"
+          },
+          "mention_type": "chat",
+          "mention_id": "5ed73711-c67d-483f-8b8e-a906c49fb953"
+        },
+        "type": "mention"
+      }
+    ],
+    "attachments": [],
+    "async_files": []
+  },
+  "sync_id": "859db123-943f-42a8-af5b-4bb7b4a648db",
+  "source_sync_id": null,
+  "body": "",
+  "data": {},
+  "metadata": {},
+  "sender": "UserSender(huid=UUID('0c6bdb15-3d93-50b6-bb47-38c740ea673a'), udid=UUID('27944cee-19d6-48dc-8547-7194ea38c28b'), ad_login='borodines', ad_domain='abb-win', username='Бородин Егор Сергеевич', is_chat_admin=True, is_chat_creator=True, device=UserDevice(manufacturer='vivo', device_name='2061', os='Android 12 / SDK: 31', pushes=True, timezone='Europe/Moscow', permissions={'contacts': True, 'microphone': True, 'notifications': True, 'storage': True}, platform=<ClientPlatforms.ANDROID: 'ANDROID'>, platform_package_id='ru.unlimitedtech.express', app_version='3.67.34+release', locale='ru'))",
+  "chat": "Chat(id=UUID('8eae0a8b-c2fb-002c-1ace-cd0bb2568e99'), type=<ChatTypes.PERSONAL_CHAT: 'PERSONAL_CHAT'>)",
+  "mentions": [
+    "##ИЗБРАННОЕ"
+  ],
+  "forward": null,
+  "reply": null,
+  "file": null,
+  "location": null,
+  "contact": null,
+  "link": null,
+  "sticker": null,
+  "state": "namespace()"
+}
