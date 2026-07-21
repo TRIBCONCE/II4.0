@@ -12,3 +12,8 @@
 TypeError: 'generator' object is not subscriptable
 
 для бота bot_id в env файле у меня есть EXPRESS_UUID
+
+Ошибка! Меня нет в этом канале, либо указан неверный ID.
+Системная ошибка: 'Bot' object has no attribute 'get_chat'
+
+я думаю что это из за того что нет Bearer Token в запросе get_chat он никде не указан может его тоже в env внести и потом в методе использовать
