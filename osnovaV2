@@ -1,35 +1,91 @@
 # src/handlers/testhandlers.py
 
+import hmac
+import hashlib
+import httpx
 from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
 
-# Создаем коллектор обработчиков
+from src.config import settings
+
 collector = HandlerCollector()
+
+# TODO: Вставь сюда UUID твоего тестового канала/группы
+TARGET_CHAT_ID = "вставь-сюда-uuid-чата"
 
 
 @collector.command("/start", description="Запуск бота")
 async def start_handler(message: IncomingMessage, bot: Bot) -> None:
-    """Обработчик команды /start. Отправляет кнопку пользователю."""
-
-    # В Express кнопки называются баблами и создаются через BubbleMarkup
     markup = BubbleMarkup()
-    markup.add_button(command="/say_hello", label="Нажми меня")
+    markup.add_button(command="/check_admin", label="Проверить права")
 
-    # Отправляем сообщение, прикрепляя созданные кнопки в параметр bubbles
     await bot.answer_message(
-        body="Привет! Нажми на кнопку ниже:",
+        body="Привет! Нажми на кнопку, чтобы я проверил свои права в тестовом канале:",
         bubbles=markup,
     )
 
 
-@collector.command("/say_hello", visible=False)
-async def say_hello_handler(message: IncomingMessage, bot: Bot) -> None:
-    """Обработчик нажатия на кнопку. visible=False скрывает команду из меню бота."""
+@collector.command("/check_admin", visible=False)
+async def check_admin_handler(message: IncomingMessage, bot: Bot) -> None:
+    bot_id_str = str(settings.express.uuid)
+    chat_id_str = str(TARGET_CHAT_ID)
+    
+    try:
+        # 1. Генерируем подпись (из официальной документации Express)
+        secret_bytes = settings.express.secret_key.encode('utf-8')
+        bot_id_bytes = bot_id_str.encode('utf-8')
+        signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
+        
+        # Убираем слеш на конце URL, если он там случайно есть
+        cts_url = str(settings.express.cts_url).rstrip("/")
+        
+        async with httpx.AsyncClient() as client:
+            # 2. Запрашиваем токен
+            token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
+            token_resp = await client.get(token_url)
+            token_resp.raise_for_status()
+            
+            token = token_resp.json().get("result")
+            if not token:
+                raise ValueError("Сервер не вернул токен")
 
-    # При нажатии на кнопку присылаем текст "Привет"
-    await bot.answer_message(body="Привет")
+            # 3. Запрашиваем информацию о чате напрямую через API v3
+            info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
+            headers = {
+                "Authorization": f"Bearer {token}", 
+                "Content-Type": "application/json"
+            }
+            info_resp = await client.get(info_url, headers=headers)
+            
+            # Обрабатываем ожидаемые ошибки (бота нет в канале или канал не найден)
+            if info_resp.status_code in (403, 404):
+                await bot.answer_message(body="❌ Ошибка! Меня нет в этом канале, либо указан неверный ID.")
+                return
+                
+            info_resp.raise_for_status()
+            chat_data = info_resp.json().get("result", {})
+            
+            # 4. Проверяем права админа в полученном JSON
+            is_admin = False
+            members = chat_data.get("members", [])
+            
+            for member in members:
+                if str(member.get("user_huid")) == bot_id_str:
+                    is_admin = member.get("admin", False)
+                    break
+                    
+            chat_name = chat_data.get("name", "Неизвестный канал")
+            
+            if is_admin:
+                await bot.answer_message(body=f"✅ Я админ и добавлен в канал: **{chat_name}**")
+            else:
+                await bot.answer_message(body=f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
+                
+    except Exception as e:
+        await bot.answer_message(
+            body=f"❌ Произошла системная ошибка при HTTP-запросе к API.\n\n`{e}`"
+        )
 
 
-# Используем правильный декоратор для всех остальных сообщений
 @collector.default_message_handler
 async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     await bot.answer_message(body="Я понимаю только команду /start. Введи её, чтобы появилась кнопка!")
