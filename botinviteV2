@@ -1,61 +1,12 @@
-# src/handlers/testhandlers.py
-
-import uuid
-from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
-
-# Создаем коллектор обработчиков
-collector = HandlerCollector()
-
-# TODO: Вставь сюда скопированный UUID твоего тестового канала/группы
-TARGET_CHAT_ID = uuid.UUID("вставь-сюда-uuid-чата")
-
-
-@collector.command("/start", description="Запуск бота")
-async def start_handler(message: IncomingMessage, bot: Bot) -> None:
-    """Обработчик команды /start. Отправляет кнопку пользователю."""
-
-    markup = BubbleMarkup()
-    markup.add_button(command="/check_admin", label="Проверить права")
-
-    await bot.answer_message(
-        body="Привет! Нажми на кнопку, чтобы я проверил свои права в тестовом канале:",
-        bubbles=markup,
-    )
-
-
-@collector.command("/check_admin", visible=False)
-async def check_admin_handler(message: IncomingMessage, bot: Bot) -> None:
-    """Обрабатывает нажатие на кнопку и запрашивает инфу о чате."""
-    
-    # Получаем ID нашего бота
+  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/handler_collector.py", line 118, in handle_bot_command
+    await message_handler(bot_command, bot)
+  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/handler.py", line 85, in __call__
+    await handler_func(message, bot)
+  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/middlewares/exception_middleware.py", line 34, in dispatch
+    raise message_handler_exc
+  File "/usr/local/lib/python3.12/site-packages/pybotx/bot/middlewares/exception_middleware.py", line 30, in dispatch
+    await call_next(message, bot)
+  File "/app/src/handlers/testhandlers.py", line 32, in check_admin_handler
     bot_id = bot.bot_accounts[0].id
-    
-    try:
-        # Запрашиваем информацию о чате у платформы
-        # Метод get_chat соответствует API-запросу GET /api/v3/botx/chats/info
-        chat = await bot.get_chat(chat_id=TARGET_CHAT_ID, bot_id=bot_id)
-        
-        # Если чат найден (нет ошибки), ищем нашего бота в списке участников
-        is_admin = False
-        
-        for member in chat.members:
-            if str(member.user_huid) == str(bot_id):
-                is_admin = member.admin
-                break
-                
-        if is_admin:
-            await bot.answer_message(body=f"✅ Я админ и добавлен в канал: **{chat.name}**")
-        else:
-            await bot.answer_message(body=f"⚠️ Я есть в канале **{chat.name}**, но у меня НЕТ прав администратора.")
-            
-    except Exception as e:
-        # Если бота нет в чате, платформа обычно возвращает 403 (No permission) 
-        # или 404 (Chat not found), и pybotx выбрасывает исключение.
-        await bot.answer_message(
-            body=f"❌ Ошибка! Меня нет в этом канале, либо указан неверный ID.\n\nСистемная ошибка: `{e}`"
-        )
-
-
-@collector.default_message_handler
-async def default_handler(message: IncomingMessage, bot: Bot) -> None:
-    await bot.answer_message(body="Я понимаю только команду /start. Введи её, чтобы появилась кнопка!")
+             ~~~~~~~~~~~~~~~~^^^
+TypeError: 'generator' object is not subscriptable
