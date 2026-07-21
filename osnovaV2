@@ -1,172 +1,27 @@
 
+import json
+
 @collector.default_message_handler
 async def default_handler(message: IncomingMessage, bot: Bot) -> None:
-    chat_id = None
-    chat_name = "Неизвестный канал"
-    
-    # Чтобы не зависеть от версии pybotx, переводим объект сообщения в обычный словарь (если можем)
-    msg_dict = message.dict() if hasattr(message, "dict") else {}
-    
-    # 1. Проверяем формат Bot API v4 (массив entities)
-    entities = msg_dict.get("entities") or getattr(message, "entities", [])
-    
-    for entity in entities:
-        # Pydantic-объекты превращаем в словари для простоты
-        e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
-        
-        if e_dict.get("type") == "mention":
-            data = e_dict.get("data", {})
-            if data.get("mention_type") in ("chat", "channel"):
-                m_data = data.get("mention_data", {})
-                chat_id = m_data.get("group_chat_id")
-                chat_name = m_data.get("name", chat_name)
-                break
-
-    # 2. Проверяем старый формат Bot API v3 (массив mentions) — резервный вариант
-    if not chat_id:
-        mentions = msg_dict.get("mentions") or getattr(message, "mentions", [])
-        for mention in mentions:
-            m_dict = mention.dict() if hasattr(mention, "dict") else (mention if isinstance(mention, dict) else {})
-            if m_dict.get("mention_type") in ("chat", "channel"):
-                m_data = m_dict.get("mention_data", {})
-                chat_id = m_data.get("group_chat_id")
-                chat_name = m_data.get("name", chat_name)
-                break
-
-    # 3. Принимаем решение
-    if chat_id:
-        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
-        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
-        await bot.answer_message(body=result_msg)
-    else:
-        # Если скрытого ID нет, значит пользователь просто написал текст
-        await bot.answer_message(
-            body="Я не нашел скрытую ссылку на канал в твоем сообщении.\n\n"
-                 "Убедись, что ты ввел `##имя` и **обязательно кликнул на канал из всплывающего синего списка**! "
-                 "Если просто набрать текст руками (даже с ##) и отправить, мессенджер передаст обычный текст без ID."
-        )
-
-
-
-# src/handlers/testhandlers.py
-
-import hmac
-import hashlib
-import httpx
-from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
-
-from src.config import settings
-
-collector = HandlerCollector()
-
-async def check_bot_admin_rights(bot: Bot, chat_id_str: str, chat_name: str) -> str:
-    """Функция для проверки прав бота в конкретном чате через HTTP-запрос."""
-    bot_id_str = str(settings.express.uuid)
-    
     try:
-        secret_bytes = settings.express.secret_key.encode('utf-8')
-        bot_id_bytes = bot_id_str.encode('utf-8')
-        signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
+        # Превращаем объект сообщения в словарь (Pydantic или стандартный)
+        msg_dict = message.dict() if hasattr(message, "dict") else vars(message)
         
-        cts_url = str(settings.express.cts_url).rstrip("/")
+        # Конвертируем в красивый текст
+        debug_dump = json.dumps(msg_dict, indent=2, ensure_ascii=False, default=str)
         
-        async with httpx.AsyncClient() as client:
-            # Получаем токен
-            token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
-            token_resp = await client.get(token_url)
-            token_resp.raise_for_status()
-            
-            token = token_resp.json().get("result")
-            if not token:
-                return "❌ Сервер не вернул токен."
-
-            # Запрашиваем информацию о чате
-            info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
-            headers = {
-                "Authorization": f"Bearer {token}", 
-                "Content-Type": "application/json"
-            }
-            info_resp = await client.get(info_url, headers=headers)
-            
-            if info_resp.status_code in (403, 404):
-                # Тот самый текст из ТЗ
-                return (f"❌ Ошибка! Меня нет в канале **{chat_name}**.\n\n"
-                        f"*Бот видит только те каналы и группы, в которых он уже состоит как администратор. "
-                        f"Добавьте бота туда и назначьте ему права администратора, затем повторите поиск.*")
-                
-            info_resp.raise_for_status()
-            chat_data = info_resp.json().get("result", {})
-            
-            # Проверяем права
-            is_admin = False
-            for member in chat_data.get("members", []):
-                if str(member.get("user_huid")) == bot_id_str:
-                    is_admin = member.get("admin", False)
-                    break
-            
-            real_chat_name = chat_data.get("name", chat_name)
-            
-            if is_admin:
-                return f"✅ Я админ и добавлен в канал: **{real_chat_name}**"
-            else:
-                return f"⚠️ Я есть в канале **{real_chat_name}**, но у меня НЕТ прав администратора."
-                
-    except Exception as e:
-        return f"❌ Произошла системная ошибка при HTTP-запросе к API.\n\n`{e}`"
-
-
-@collector.command("/start", description="Запуск бота")
-async def start_handler(message: IncomingMessage, bot: Bot) -> None:
-    markup = BubbleMarkup()
-    markup.add_button(command="/check_admin", label="Проверить права")
-
-    await bot.answer_message(
-        body="Привет! Нажми кнопку ниже, чтобы проверить права:",
-        bubbles=markup,
-    )
-
-
-@collector.command("/check_admin", visible=False)
-async def check_admin_handler(message: IncomingMessage, bot: Bot) -> None:
-    await bot.answer_message(
-        body="Пришли мне название целевого канала или группы в формате `##имяканала`.\n\n"
-             "*Обязательно выбери нужный канал из всплывающей подсказки мессенджера!*"
-    )
-
-
-@collector.default_message_handler
-async def default_handler(message: IncomingMessage, bot: Bot) -> None:
-    """Ловит все текстовые сообщения и ищет в них упоминания каналов."""
-    
-    chat_id = None
-    chat_name = "Неизвестный канал"
-    
-    # Пытаемся найти сущность 'mention' в сообщении (так Express передает ##каналы)
-    if hasattr(message, "mentions") and message.mentions:
-        for mention in message.mentions:
-            m_type = getattr(mention, "mention_type", None)
-            
-            # Нас интересуют только упоминания чатов или каналов
-            if m_type in ("chat", "channel"):
-                m_data = getattr(mention, "mention_data", None)
-                if m_data:
-                    # В зависимости от версии pybotx, m_data может быть объектом или словарем
-                    if hasattr(m_data, "group_chat_id"):
-                        chat_id = m_data.group_chat_id
-                        chat_name = getattr(m_data, "name", chat_name)
-                    elif isinstance(m_data, dict):
-                        chat_id = m_data.get("group_chat_id")
-                        chat_name = m_data.get("name", chat_name)
-                break # Нашли первый канал, выходим из цикла
-    
-    if chat_id:
-        # Если канал найден, запускаем нашу функцию проверки
-        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
-        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
-        await bot.answer_message(body=result_msg)
-    else:
-        # Если пользователь просто написал текст без ##канала
-        await bot.answer_message(
-            body="Я не нашел канал в твоем сообщении.\n"
-                 "Убедись, что ты используешь формат `##имяканала` и выбираешь его из списка."
+        # Если есть сырой JSON от платформы (raw_command), достаем и его
+        raw_cmd = getattr(message, "raw_command", "Нет поля raw_command")
+        
+        reply_text = (
+            f"🕵️‍♂️ **Отладочная информация!**\n"
+            f"Вот как библиотека видит твое сообщение:\n\n"
+            f"```json\n{debug_dump}\n```\n\n"
+            f"RAW:\n`{raw_cmd}`"
         )
+        
+        # Если текст слишком длинный, обрезаем, чтобы Express не выдал ошибку
+        await bot.answer_message(body=reply_text[:4000])
+        
+    except Exception as e:
+        await bot.answer_message(body=f"Ошибка дебага: {e}")
