@@ -1,159 +1,326 @@
-[tool.poetry]
-name = "invite-v2-bot"
-version = "0.1.0"
-description = "Бот для добавления пользователей в чаты и каналы в eXpress"
-authors = ["BorodinES <BorodinES@akbars.ru>"]
-readme = "README.md"
-packages = [{include = "src"}]
+# src/handlers/testhandlers.py
 
-[[tool.poetry.source]]
-name = "artifactory"
-url = "https://artifactory.akbars.tech/artifactory/api/pypi/pypi/simple"
-priority = "primary"
+import hmac
+import traceback
+import hashlib
+import httpx
+import asyncio
+import ssl  # Обязательно добавляем модуль ssl
+from ldap3 import Server, Connection, ALL, SUBTREE, Tls  # Добавляем Tls
+from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
 
-[tool.poetry.dependencies]
-python = ">=3.12, <3.13"
-hypercorn = "==0.17.3"
-httpx = "==0.28.1"
-pybotx = "==0.75.1"
-fastapi = {version = "0.115.6", extras = ["standard"]}
+from src.config import settings
 
-[tool.poetry.group.dev.dependencies]
-black = "==24.4.2"
-isort = "==5.13.2"
-pytest = "==8.2.2"
+# ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
+collector = HandlerCollector()
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+# Наша собственная безотказная FSM!
+# Формат: { "user_huid": {"state": "ШАГ", "chat_id": "...", "chat_name": "..."} }
+USER_STATES = {}
 
-[tool.black]
-line-length = 119
 
-[tool.isort]
-src_paths = ["src"]
-line_length = 119
-profile = "black"
+# ─── 1. ЛОГИКА ACTIVE DIRECTORY (LDAP) ────────────────────────────────────
 
-[tool.pytest.ini_options]
-python_files = ["tests.py", "test_*.py", "*_tests.py"]
-pythonpath = ["src"]
+# TODO: Вставь сюда данные сервисной учетки (лучше вынести в .env)
+LDAP_USER = "ABB-WIN\\z-BorodinES"
+LDAP_PASSWORD = "_777TodayBlackEgBor777_"
+LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
-RG artifactory_url="artifactory.akbars.tech"
-ARG docker_registry="${artifactory_url}/common-docker-local/trustedimages/alpine/"
-ARG docker_builder_tag="3.12-alpine-abdt"
 
-# --- Этап 1: Сборка ---
-FROM ${docker_registry}python:${docker_builder_tag} as builder
+def search_ad_departments_sync(search_str: str) -> tuple:
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
 
-RUN apk add --no-cache gcc g++ musl-dev libffi-dev make
-WORKDIR /app
+    search_str = search_str.lower()
 
-RUN pip3 install --upgrade pip && \
-    pip3 install poetry==2.0.0
+    # 🌟 МАГИЯ: Автоматически получаем правильный корень домена (например, DC=abb-win,DC=akbars,DC=ru)
+    # Если сервер вдруг его не отдаст, используем хардкод как запасной вариант
+    try:
+        real_search_base = server.info.other.get('defaultNamingContext')[0]
+    except Exception:
+        real_search_base = "DC=abb-win,DC=akbars,DC=ru"
 
-COPY ./pyproject.toml ./poetry.lock ./
-RUN poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --no-root
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
 
-# --- Этап 2: Runtime ---
-FROM ${docker_registry}python:${docker_builder_tag}
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType',
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4',
+        'distinguishedName'
+    ]
 
-RUN apk add --no-cache libffi && mkdir -p /app
+    debug_log = [
+        f"🔎 **Search Base:** `{real_search_base}`",
+        f"🛠 **LDAP Фильтр:**\n`{ldap_filter}`"
+    ]
 
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin/hypercorn /usr/local/bin/
+    # Используем real_search_base вместо старой переменной
+    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
 
-COPY src /app/src
+    debug_log.append(f"📦 **Сервер AD нашел записей:** {len(conn.entries)}")
 
-ENV PYTHONPATH=/app/src
-ENV TZ="Europe/Moscow"
+    results = {}
+    skipped_count = 0
 
-WORKDIR /app
+    for i, entry in enumerate(conn.entries):
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
 
-ENTRYPOINT ["hypercorn", "src.main:app", "--bind", "0.0.0.0:8000"]
-ModuleNotFoundError: No module named 'ldap3'
-Process SpawnProcess-1:
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
-    self.run()
-  File "/usr/local/lib/python3.12/multiprocessing/process.py", line 108, in run
-    self._target(*self._args, **self._kwargs)
-  File "/usr/local/lib/python3.12/site-packages/hypercorn/asyncio/run.py", line 187, in asyncio_worker
-    app = load_application(config.application_path, config.wsgi_max_body_size)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/hypercorn/utils.py", line 110, in load_application
-    module = import_module(import_name)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/importlib/__init__.py", line 90, in import_module
-    return _bootstrap._gcd_import(name[level:], package, level)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
-  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
-  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
-  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
-  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
-  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-  File "/app/src/main.py", line 5, in <module>
-    from bot import create_bot
-  File "/app/src/bot.py", line 9, in <module>
-    from handlers import testhandlers
-  File "/app/src/handlers/testhandlers.py", line 8, in <module>
-    from ldap3 import Server, Connection, ALL, SUBTREE, Tls  # Добавляем Tls
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-смотри как у меня подключаются библиотеки в докер файле есть ARG artifactory_url="artifactory.akbars.tech" 
-а в файле poetry.lock записаны библиотеки к примеру [[package]]
-name = "pybotx"
-version = "0.75.1"
-description = "A python library for interacting with eXpress BotX API"
-optional = false
-python-versions = ">=3.9,<3.14"
-groups = ["main"]
-files = [
-    {file = "pybotx-0.75.1-py3-none-any.whl", hash = "sha256:b84f20f744cc0b03a25134975a90a9fe797294ef954c37f3dd2a2d9a15f9465c"},
-    {file = "pybotx-0.75.1.tar.gz", hash = "sha256:079ccaa1e597870cff9ed265af7097626d477e66640d19b352121ef24a1d7f89"},
-]
-наверное это так делается впиши таким образом все новые библиотеки которые ты добавил если это так делается.
-server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2))
+        # Для первых двух найденных записей выводим их сырые данные в лог
+        if i < 2:
+            debug_log.append(
+                f"\n👤 **Пример сырой записи из AD:**\n"
+                f"- name: `{name}`\n"
+                f"- SAM: `{sam}`\n"
+                f"- Type: `{emp_type}`\n"
+                f"- Dept: `{getattr(entry, 'department', 'Пусто')}`\n"
+                f"- Div: `{getattr(entry, 'division', 'Пусто')}`"
+            )
 
-Всё отлично работает всё теперь делаем ту самую заглавную логику, но пока без добавления ибо с добавлением мне надо спрашивать у начальника, хочу чтобы у бота была такая последовательность, псле команды /start Бот запрашивает так же название канала, после того как название будет введено вверно и пройдут проверки на нахождение
-бота в чате или канале а так же проверка на админа, выдаём пользователю пока одну кнопку [Добавить по подразделению], после нажатия кнопки предлагается ввести название: поиск должен осуществляться согласно тз 7.	Пользователь вводит часть названия: например, сопровожд
-8.	Бот ищет совпадения по всем трём полям, дедуплицирует результат.
-9.	Выводит найденные подразделения со счётчиком сотрудников:
+        # Проверка наших исключений
+        if (
+                emp_type in ["service", "vendor"] or
+                sam.startswith("health") or sam.startswith("audit") or
+                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+                "$" in name or "администратор" in name or "тестовая" in name or
+                "отключенные пользователи" in dn or "сторон" in dn
+        ):
+            skipped_count += 1
+            continue
 
-Найдено:
-• Управление сопровождения прикладных систем — 31 чел.
-• Отдел сопровождения серверов — 12 чел.
+        dept_name = "Неизвестное подразделение"
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = getattr(entry, attr).value if hasattr(entry, attr) else None
+            if val and search_str in str(val).lower():
+                dept_name = str(val)
+                break
 
-Теперь как будем искать пользователей вот тут очень важно ибо работать будем через Эктив директори следовательно выгрузим всех пользователей выгрузим из эктив директори но в обзор попадут пользователи вот по такому фильтру:  
-$AllUsersOn = Get-ADUser `
-        -Filter { enabled -eq $true } `
-        -Properties department,division,extensionAttribute3,extensionAttribute4, samaccountname, displayName, name, whenCreated, employeeType 
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
 
-$sam = ([string]$User.samaccountname).Trim()
-        $name = $User.name
-        $dn = $User.DistinguishedName
+    debug_log.append(f"\n🚫 **Отсеяно нашим Python-фильтром (исключения):** {skipped_count}")
 
-		if (
-			$User.whenCreated -gt $LimitDate -or
-			(@("service","vendor") -contains ([string]$User.employeeType).Trim().ToLower()) -or
+    conn.unbind()
+    return results, "\n".join(debug_log)
 
-			$sam -like "Health*" -or
-			$sam -like "audit*" -or
-			$sam -like "esas*" -or
-			$sam -like "a-*" -or
-			$sam -like "z-*" -or
-			$name -like "*`$*" -or
-			$name -like "*Администратор*" -or
-			$name -like "*Тестовая*" -or
-			$dn -like "*Отключенные пользователи*" -or
-			$dn -like "*сторон*"
 
-смотри теперь как будем считывать информацию вот пользователь написал в чат: в самом начале пройдёмся по параметру department, сосчитаем всех подходящих, потом по division, потом по extensionAttribute3, extensionAttribute4
-Подключение к эктив директори идёт через ldap 389.
+async def search_ad_departments(search_str: str) -> tuple:
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
 
-Всё потом выводится информация Найдено:
-• Управление сопровождения прикладных систем — 31 чел.
-• Отдел сопровождения серверов — 12 чел.
 
-Дальше пусть запустится скрипт который считает всех пользователей экспресс и тоже выведится информация и пока на этом всё кнопки будем делать дальше ибо надо проверить будет как работать будет вот этот функционал.
+async def search_ad_departments(search_str: str) -> dict:
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+
+# ─── 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ API ───────────────────────────────────────
+
+async def get_botx_token(bot_id_str: str, cts_url: str) -> str:
+    secret_bytes = settings.express.secret_key.encode('utf-8')
+    bot_id_bytes = bot_id_str.encode('utf-8')
+    signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
+
+    async with httpx.AsyncClient() as client:
+        token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
+        resp = await client.get(token_url)
+        resp.raise_for_status()
+        return resp.json().get("result")
+
+
+async def check_bot_admin_rights(bot: Bot, chat_id_str: str, chat_name: str) -> str:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+
+    try:
+        token = await get_botx_token(bot_id_str, cts_url)
+        async with httpx.AsyncClient() as client:
+            info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+            info_resp = await client.get(info_url, headers=headers)
+            if info_resp.status_code in (403, 404):
+                return "NOT_FOUND"
+
+            info_resp.raise_for_status()
+            chat_data = info_resp.json().get("result", {})
+
+            for member in chat_data.get("members", []):
+                if str(member.get("user_huid")) == bot_id_str:
+                    return "ADMIN" if member.get("admin", False) else "MEMBER"
+            return "NOT_FOUND"
+    except Exception:
+        return "ERROR"
+
+
+async def count_express_users() -> int:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
+
+        resp = await client.get(csv_url, headers=headers, params=params)
+        resp.raise_for_status()
+
+        csv_lines = resp.text.strip().split('\n')
+        active_count = 0
+        for line in csv_lines[1:]:
+            columns = line.split(',')
+            if len(columns) > 6 and columns[6].strip().lower() == "true":
+                active_count += 1
+        return active_count
+
+
+# ─── 3. ХЕНДЛЕРЫ ДИАЛОГА (БЕЗ ВНЕШНИХ БИБЛИОТЕК FSM) ──────────────────────
+
+@collector.command("/start", description="Запуск бота")
+async def start_handler(message: IncomingMessage, bot: Bot) -> None:
+    user_huid = str(message.sender.huid)
+
+    # Шаг 1: Устанавливаем статус ожидания канала
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
+
+    await bot.answer_message(
+        body="Привет! Я бот для массового добавления пользователей.\n\n"
+             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
+    )
+
+
+@collector.command("/add_by_dept", visible=False)
+async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
+    user_huid = str(message.sender.huid)
+    user_data = USER_STATES.get(user_huid, {})
+
+    # Проверяем, что пользователь прошел Шаг 1
+    if user_data.get("state") != "WAIT_FOR_ACTION":
+        await bot.answer_message("Сначала выберите канал с помощью команды /start.")
+        return
+
+    # Шаг 3: Переводим в ожидание ввода подразделения
+    USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
+
+    await bot.answer_message(
+        body="Введите часть названия подразделения (например, `сопровожд`):\n"
+             "*Поиск будет выполнен по полям department, division, extensionAttribute3 и 4*"
+    )
+
+
+@collector.default_message_handler
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    user_huid = str(message.sender.huid)
+    user_data = USER_STATES.get(user_huid, {})
+    current_state = user_data.get("state")
+
+    # ─── ЕСЛИ ЖДЕМ ВВОДА КАНАЛА ───
+    if current_state == "WAIT_FOR_CHANNEL":
+        chat_id = None
+        chat_name = "Неизвестный канал"
+
+        # Парсим ID канала
+        raw_cmd = getattr(message, "raw_command", {})
+        if hasattr(raw_cmd, "dict"):
+            raw_cmd = raw_cmd.dict()
+        elif not isinstance(raw_cmd, dict):
+            raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
+
+        for entity in raw_cmd.get("entities", []):
+            e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
+            if e_dict.get("type") == "mention":
+                data = e_dict.get("data", {})
+                if data.get("mention_type") in ("chat", "channel"):
+                    chat_id = data.get("mention_data", {}).get("group_chat_id")
+                    chat_name = data.get("mention_data", {}).get("name", chat_name)
+                    break
+
+        if not chat_id:
+            await bot.answer_message("Я не вижу канала. Убедись, что используешь `##имя` и выбираешь его из списка!")
+            return
+
+        await bot.answer_message(body=f"⏳ Проверяю права в канале **{chat_name}**...")
+        status = await check_bot_admin_rights(bot, str(chat_id), chat_name)
+
+        if status == "ADMIN":
+            # Шаг 2: Успех! Переводим в состояние выбора действия и сохраняем ID чата
+            USER_STATES[user_huid]["target_chat_id"] = str(chat_id)
+            USER_STATES[user_huid]["target_chat_name"] = chat_name
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+
+            markup = BubbleMarkup()
+            markup.add_button(command="/add_by_dept", label="Добавить по подразделению")
+
+            await bot.answer_message(
+                body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nЧто будем делать дальше?",
+                bubbles=markup
+            )
+        elif status == "MEMBER":
+            await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
+        else:
+            await bot.answer_message(
+                f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
+
+        return
+
+    # ─── ЕСЛИ ЖДЕМ ВВОДА НАЗВАНИЯ ПОДРАЗДЕЛЕНИЯ ───
+    elif current_state == "WAIT_FOR_DEPT":
+        search_str = message.body.strip()
+
+        if len(search_str) < 3:
+            await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
+            return
+
+        await bot.answer_message(f"⏳ Выполняю поиск в Active Directory по запросу «{search_str}»...")
+
+        try:
+            # Правильно распаковываем кортеж из двух элементов:
+            ad_results, debug_text = await search_ad_departments(search_str)
+
+            # Сначала отправляем отладочную информацию
+            await bot.answer_message(body=f"🕵️‍♂️ **Дебаг поиска:**\n{debug_text}")
+
+            if not ad_results:
+                await bot.answer_message(
+                    f"По запросу «{search_str}» целевых подразделений не найдено. Попробуйте другую часть названия.")
+                return
+
+            reply_lines = ["**Найдено в Active Directory:**"]
+            for dept, count in ad_results.items():
+                reply_lines.append(f"• {dept} — {count} чел.")
+
+            await bot.answer_message(body="\n".join(reply_lines))
+            await bot.answer_message(body="⏳ Подсчитываю общее количество активных пользователей в Express...")
+
+            express_count = await count_express_users()
+
+            await bot.answer_message(
+                body=f"📊 **Сводка по Express:**\nВсего активных пользователей в мессенджере: {express_count} чел.\n\n"
+                     f"*(Дальше мы сделаем кнопки для выбора конкретного подразделения из списка)*"
+            )
+
+        except Exception as e:
+            # Получаем полный стек вызова ошибки
+            error_details = traceback.format_exc()
+
+            # Обрезаем, если текст слишком длинный для Express (оставляем последние 3500 символов)
+            if len(error_details) > 3500:
+                error_details = "..." + error_details[-3500:]
+
+            await bot.answer_message(
+                body=f"❌ **Произошла ошибка при поиске:**\n`{e}`\n\n"
+                     f"🕵️‍♂️ **Трассировка для отладки:**\n```python\n{error_details}\n```"
+            )
+
+        return
+
+    # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
+    await bot.answer_message(body="Введите `/start`, чтобы начать работу с ботом.")
