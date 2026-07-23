@@ -1,8 +1,13 @@
-Произошла ошибка при поиске:
-'tuple' object has no attribute 'items'
- Трассировка для отладки:
-Traceback (most recent call last):
-  File "/app/src/handlers/testhandlers.py", line 338, in default_handler
-    for dept, count in ad_results.items():
-                       ^^^^^^^^^^^^^^^^
-AttributeError: 'tuple' object has no attribute 'items'
+Выполняю поиск в Active Directory по запросу «сопровожд»...
+14:27
+Bot invite v2
+ Дебаг поиска:
+ Search Base: DC=abb-win,DC=ru
+🛠 LDAP Фильтр:
+(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(|(department=*сопровожд*)(division=*сопровожд*)(extensionAttribute3=*сопровожд*)(extensionAttribute4=*сопровожд*)))
+ Сервер AD нашел записей: 0
+ Отсеяно нашим Python-фильтром (исключения): 0
+14:27
+Bot invite v2
+По запросу «сопровожд» целевых подразделений не найдено. Попробуйте другую часть названия. 
+Мне кажется что что то не так явно гдето ошибка
