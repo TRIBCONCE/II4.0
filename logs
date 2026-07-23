@@ -1,1 +1,34 @@
- Произошла ошибка при поиске: invalid server address
+Traceback (most recent call last):
+  File "/app/src/handlers/testhandlers.py", line 249, in default_handler
+    ad_results = await search_ad_departments(search_str)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/handlers/testhandlers.py", line 84, in search_ad_departments
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/handlers/testhandlers.py", line 50, in search_ad_departments_sync
+    conn.search(search_base=LDAP_SEARCH_BASE, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+  File "/usr/local/lib/python3.12/site-packages/ldap3/core/connection.py", line 853, in search
+    response = self.post_send_search(self.send('searchRequest', request, controls))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/sync.py", line 178, in post_send_search
+    responses, result = self.get_response(message_id)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 383, in get_response
+    ref_response, ref_result = self.do_operation_on_referral(self._outstanding[message_id], responses[-2]['referrals'])
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 807, in do_operation_on_referral
+    selected_referral, referral_connection, cachekey = self.create_referral_connection(referrals)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 786, in create_referral_connection
+    referral_connection.open()
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/sync.py", line 57, in open
+    BaseStrategy.open(self, reset_usage, read_server_info)
+  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 154, in open
+    raise LDAPSocketOpenError('invalid server address')
+ldap3.core.exceptions.LDAPSocketOpenError: invalid server address
