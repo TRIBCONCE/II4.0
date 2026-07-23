@@ -1,45 +1,81 @@
-# ─── ЕСЛИ ЖДЕМ ВВОДА НАЗВАНИЯ ПОДРАЗДЕЛЕНИЯ ───
-    elif current_state == "WAIT_FOR_DEPT":
-        search_str = message.body.strip()
-        
-        if len(search_str) < 3:
-            await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
-            return
-            
-        await bot.answer_message(f"⏳ Выполняю поиск в Active Directory по запросу «{search_str}»...")
-        
-        try:
-            ad_results = await search_ad_departments(search_str)
-            
-            if not ad_results:
-                await bot.answer_message(f"По запросу «{search_str}» подразделений в AD не найдено. Попробуйте другую часть названия.")
-                return
-                
-            reply_lines = ["**Найдено в Active Directory:**"]
-            for dept, count in ad_results.items():
-                reply_lines.append(f"• {dept} — {count} чел.")
-                
-            await bot.answer_message(body="\n".join(reply_lines))
-            await bot.answer_message(body="⏳ Подсчитываю общее количество активных пользователей в Express...")
-            
-            express_count = await count_express_users()
-            
-            await bot.answer_message(
-                body=f"📊 **Сводка по Express:**\nВсего активных пользователей в мессенджере: {express_count} чел.\n\n"
-                     f"*(Дальше мы сделаем кнопки для выбора конкретного подразделения из списка)*"
+def search_ad_departments_sync(search_str: str) -> tuple:
+    """Теперь возвращает кортеж (результаты, лог_отладки)"""
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
+
+    search_str = search_str.lower()
+    
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType',
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4',
+        'distinguishedName'
+    ]
+
+    # Подготавливаем отладочную информацию
+    debug_log = [
+        f"🔎 **Search Base:** `{LDAP_SEARCH_BASE}`",
+        f"🛠 **LDAP Фильтр:**\n`{ldap_filter}`"
+    ]
+
+    conn.search(search_base=LDAP_SEARCH_BASE, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    debug_log.append(f"📦 **Сервер AD нашел записей:** {len(conn.entries)}")
+
+    results = {}
+    skipped_count = 0
+
+    for i, entry in enumerate(conn.entries):
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+
+        # Для первых двух найденных записей выводим их сырые данные в лог
+        if i < 2:
+            debug_log.append(
+                f"\n👤 **Пример сырой записи из AD:**\n"
+                f"- name: `{name}`\n"
+                f"- SAM: `{sam}`\n"
+                f"- Type: `{emp_type}`\n"
+                f"- Dept: `{getattr(entry, 'department', 'Пусто')}`\n"
+                f"- Div: `{getattr(entry, 'division', 'Пусто')}`"
             )
-            
-        except Exception as e:
-            # Получаем полный стек вызова ошибки
-            error_details = traceback.format_exc()
-            
-            # Обрезаем, если текст слишком длинный для Express (оставляем последние 3500 символов)
-            if len(error_details) > 3500:
-                error_details = "..." + error_details[-3500:]
-                
-            await bot.answer_message(
-                body=f"❌ **Произошла ошибка при поиске:**\n`{e}`\n\n"
-                     f"🕵️‍♂️ **Трассировка для отладки:**\n```python\n{error_details}\n```"
-            )
-            
-        return
+
+        # Проверка наших исключений
+        if (
+                emp_type in ["service", "vendor"] or
+                sam.startswith("health") or sam.startswith("audit") or
+                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+                "$" in name or "администратор" in name or "тестовая" in name or
+                "отключенные пользователи" in dn or "сторон" in dn
+        ):
+            skipped_count += 1
+            continue
+
+        dept_name = "Неизвестное подразделение"
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = getattr(entry, attr).value if hasattr(entry, attr) else None
+            if val and search_str in str(val).lower():
+                dept_name = str(val)
+                break
+
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
+
+    debug_log.append(f"\n🚫 **Отсеяно нашим Python-фильтром (исключения):** {skipped_count}")
+
+    conn.unbind()
+    return results, "\n".join(debug_log)
+
+
+async def search_ad_departments(search_str: str) -> tuple:
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
