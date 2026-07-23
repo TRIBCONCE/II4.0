@@ -23,7 +23,7 @@ USER_STATES = {}
 
 # TODO: Вставь сюда данные сервисной учетки (лучше вынести в .env)
 LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "_777TodayBlackEgBor777_"
+LDAP_PASSWORD = "скрыл"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
 
