@@ -1,34 +1,59 @@
-Traceback (most recent call last):
-  File "/app/src/handlers/testhandlers.py", line 249, in default_handler
-    ad_results = await search_ad_departments(search_str)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/app/src/handlers/testhandlers.py", line 84, in search_ad_departments
-    return await asyncio.to_thread(search_ad_departments_sync, search_str)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/asyncio/threads.py", line 25, in to_thread
-    return await loop.run_in_executor(None, func_call)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/concurrent/futures/thread.py", line 59, in run
-    result = self.fn(*self.args, **self.kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/app/src/handlers/testhandlers.py", line 50, in search_ad_departments_sync
+def search_ad_departments_sync(search_str: str) -> dict:
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
+
+    search_str = search_str.lower()
+
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType',
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4',
+        'distinguishedName'
+    ]
+
     conn.search(search_base=LDAP_SEARCH_BASE, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
-  File "/usr/local/lib/python3.12/site-packages/ldap3/core/connection.py", line 853, in search
-    response = self.post_send_search(self.send('searchRequest', request, controls))
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/sync.py", line 178, in post_send_search
-    responses, result = self.get_response(message_id)
-                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 383, in get_response
-    ref_response, ref_result = self.do_operation_on_referral(self._outstanding[message_id], responses[-2]['referrals'])
-                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 807, in do_operation_on_referral
-    selected_referral, referral_connection, cachekey = self.create_referral_connection(referrals)
-                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 786, in create_referral_connection
-    referral_connection.open()
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/sync.py", line 57, in open
-    BaseStrategy.open(self, reset_usage, read_server_info)
-  File "/usr/local/lib/python3.12/site-packages/ldap3/strategy/base.py", line 154, in open
-    raise LDAPSocketOpenError('invalid server address')
-ldap3.core.exceptions.LDAPSocketOpenError: invalid server address
+    results = {}
+
+    for entry in conn.entries:
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+
+        if (
+                emp_type in ["service", "vendor"] or
+                sam.startswith("health") or sam.startswith("audit") or
+                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+                "$" in name or "администратор" in name or "тестовая" in name or
+                "отключенные пользователи" in dn or "сторон" in dn
+        ):
+            continue
+
+        dept_name = "Неизвестное подразделение"
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = getattr(entry, attr).value if hasattr(entry, attr) else None
+            if val and search_str in str(val).lower():
+                dept_name = str(val)
+                break
+
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
+
+    conn.unbind()
+    return results
+
+async def search_ad_departments(search_str: str) -> dict:
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+Выполняю поиск в Active Directory по запросу «сопровожд»...
+14:15
+Bot invite v2
+По запросу «сопровожд» подразделений в AD не найдено. Попробуйте другую часть названия.
