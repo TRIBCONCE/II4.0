@@ -1,45 +1,285 @@
-@collector.default_message_handler
-async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+# src/handlers/testhandlers.py
+
+import hmac
+import hashlib
+import httpx
+import asyncio
+from ldap3 import Server, Connection, ALL, SUBTREE
+from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
+from pybotx_fsm import FSMCollector, FSMMachine, State, MemoryStorage
+
+from src.config import settings
+
+# ─── ИНИЦИАЛИЗАЦИЯ FSM ────────────────────────────────────────────────────
+# Используем память для хранения состояний (для тестов идеально)
+storage = MemoryStorage()
+fsm = FSMCollector(storage)
+collector = HandlerCollector()
+collector.include(fsm)
+
+class AddUserFSM(FSMMachine):
+    WAIT_FOR_CHANNEL = State()
+    WAIT_FOR_ACTION = State()
+    WAIT_FOR_DEPT = State()
+
+
+# ─── 1. ЛОГИКА ACTIVE DIRECTORY (LDAP) ────────────────────────────────────
+
+# TODO: Вынеси эти креды в .env и config.py для безопасности
+LDAP_SERVER = "ldap://твой_сервер:389"
+LDAP_USER = "домен\\твоя_учетка"
+LDAP_PASSWORD = "твой_пароль"
+LDAP_SEARCH_BASE = "DC=abb-win,DC=ru" # Уточни свой Search Base
+
+def search_ad_departments_sync(search_str: str) -> dict:
+    """Синхронная функция для поиска в AD с фильтрами из PowerShell."""
+    
+    server = Server(LDAP_SERVER, get_info=ALL)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True)
+    
+    search_str = search_str.lower()
+    
+    # Ищем только активные учетки (userAccountControl) 
+    # и проверяем совпадение подстроки в любом из 4х полей
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+    
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType', 
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 
+        'distinguishedName'
+    ]
+    
+    conn.search(search_base=LDAP_SEARCH_BASE, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    results = {}
+    
+    for entry in conn.entries:
+        # Извлекаем значения
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+        
+        # ─── Фильтрация по аналогии с PowerShell ───
+        if (
+            emp_type in ["service", "vendor"] or
+            sam.startswith("health") or
+            sam.startswith("audit") or
+            sam.startswith("esas") or
+            sam.startswith("a-") or
+            sam.startswith("z-") or
+            "$" in name or
+            "администратор" in name or
+            "тестовая" in name or
+            "отключенные пользователи" in dn or
+            "сторон" in dn
+        ):
+            continue  # Пропускаем, если попали под фильтр
+            
+        # Определяем, в каком именно поле нашлось совпадение, чтобы сгруппировать
+        dept_name = "Неизвестное подразделение"
+        
+        # Проверяем поля в порядке приоритета
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = getattr(entry, attr).value if hasattr(entry, attr) else None
+            if val and search_str in str(val).lower():
+                dept_name = str(val)
+                break
+                
+        # Считаем
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
+        
+    conn.unbind()
+    return results
+
+
+async def search_ad_departments(search_str: str) -> dict:
+    """Асинхронная обертка, чтобы LDAP-запрос не блокировал бота."""
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+
+# ─── 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ API ───────────────────────────────────────
+
+async def get_botx_token(bot_id_str: str, cts_url: str) -> str:
+    secret_bytes = settings.express.secret_key.encode('utf-8')
+    bot_id_bytes = bot_id_str.encode('utf-8')
+    signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
+    
+    async with httpx.AsyncClient() as client:
+        token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
+        resp = await client.get(token_url)
+        resp.raise_for_status()
+        return resp.json().get("result")
+
+async def check_bot_admin_rights(bot: Bot, chat_id_str: str, chat_name: str) -> str:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    
+    try:
+        token = await get_botx_token(bot_id_str, cts_url)
+        async with httpx.AsyncClient() as client:
+            info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            
+            info_resp = await client.get(info_url, headers=headers)
+            if info_resp.status_code in (403, 404):
+                return "NOT_FOUND"
+                
+            info_resp.raise_for_status()
+            chat_data = info_resp.json().get("result", {})
+            
+            for member in chat_data.get("members", []):
+                if str(member.get("user_huid")) == bot_id_str:
+                    return "ADMIN" if member.get("admin", False) else "MEMBER"
+            return "NOT_FOUND"
+    except Exception:
+        return "ERROR"
+
+async def count_express_users() -> int:
+    """Скачивает CSV и возвращает количество активных пользователей Express."""
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
+        
+        resp = await client.get(csv_url, headers=headers, params=params)
+        resp.raise_for_status()
+        
+        csv_lines = resp.text.strip().split('\n')
+        active_count = 0
+        for line in csv_lines[1:]:
+            columns = line.split(',')
+            if len(columns) > 6 and columns[6].strip().lower() == "true":
+                active_count += 1
+        return active_count
+
+
+# ─── 3. FSM ХЕНДЛЕРЫ ДИАЛОГА ──────────────────────────────────────────────
+
+@collector.command("/start", description="Запуск бота")
+async def start_handler(message: IncomingMessage, bot: Bot) -> None:
+    # Переводим пользователя в состояние ожидания канала
+    await fsm.set_state(message.sender.huid, AddUserFSM.WAIT_FOR_CHANNEL)
+    
+    await bot.answer_message(
+        body="Привет! Я бот для массового добавления пользователей.\n\n"
+             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
+    )
+
+
+@fsm.on(AddUserFSM.WAIT_FOR_CHANNEL)
+async def process_channel_mention(message: IncomingMessage, bot: Bot) -> None:
+    """Шаг 1: Ожидаем ввод канала и проверяем права."""
     chat_id = None
     chat_name = "Неизвестный канал"
     
-    try:
-        # Достаем оригинальный сырой запрос от платформы Express
-        raw_cmd = getattr(message, "raw_command", {})
+    # Парсим ID канала (используем наш сырой парсер)
+    raw_cmd = getattr(message, "raw_command", {})
+    if hasattr(raw_cmd, "dict"): raw_cmd = raw_cmd.dict()
+    elif not isinstance(raw_cmd, dict): raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
         
-        # На всякий случай переводим в словарь, если библиотека вернула объект
-        if hasattr(raw_cmd, "dict"):
-            raw_cmd = raw_cmd.dict()
-        elif not isinstance(raw_cmd, dict):
-            raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
-            
-        # Идем в список entities
-        entities = raw_cmd.get("entities", [])
-        
-        for entity in entities:
-            # Тоже страхуемся от объектов
-            e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
-            
-            # Ищем mention типа chat или channel
-            if e_dict.get("type") == "mention":
-                data = e_dict.get("data", {})
-                if data.get("mention_type") in ("chat", "channel"):
-                    m_data = data.get("mention_data", {})
-                    chat_id = m_data.get("group_chat_id")
-                    chat_name = m_data.get("name", chat_name)
-                    break  # Нашли канал, выходим из цикла
-                    
-    except Exception as e:
-        await bot.answer_message(body=f"❌ Ошибка парсинга: {e}")
+    for entity in raw_cmd.get("entities", []):
+        e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
+        if e_dict.get("type") == "mention":
+            data = e_dict.get("data", {})
+            if data.get("mention_type") in ("chat", "channel"):
+                chat_id = data.get("mention_data", {}).get("group_chat_id")
+                chat_name = data.get("mention_data", {}).get("name", chat_name)
+                break
+
+    if not chat_id:
+        await bot.answer_message("Я не вижу канала. Убедись, что используешь `##имя` и выбираешь его из списка!")
         return
 
-    # Принимаем решение
-    if chat_id:
-        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
-        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
-        await bot.answer_message(body=result_msg)
-    else:
+    # Проверяем права
+    await bot.answer_message(body=f"⏳ Проверяю права в канале **{chat_name}**...")
+    status = await check_bot_admin_rights(bot, str(chat_id), chat_name)
+    
+    if status == "ADMIN":
+        # Успех! Переводим в следующее состояние
+        await fsm.set_state(message.sender.huid, AddUserFSM.WAIT_FOR_ACTION)
+        
+        # Сохраняем chat_id в стейт, чтобы использовать позже
+        await fsm.update_state_data(message.sender.huid, {"target_chat_id": str(chat_id), "target_chat_name": chat_name})
+        
+        markup = BubbleMarkup()
+        markup.add_button(command="/add_by_dept", label="Добавить по подразделению")
+        
         await bot.answer_message(
-            body="Я не нашел скрытую ссылку на канал в твоем сообщении.\n\n"
-                 "Убедись, что ты ввел `##имя` и **обязательно кликнул на канал из всплывающего списка**!"
+            body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nЧто будем делать дальше?",
+            bubbles=markup
         )
+    elif status == "MEMBER":
+        await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора. Дайте мне права и повторите ввод канала.")
+    else:
+        await bot.answer_message(f"❌ Меня нет в канале **{chat_name}**. Добавьте меня, выдайте права администратора и повторите ввод канала.")
+
+
+@fsm.on(AddUserFSM.WAIT_FOR_ACTION)
+async def process_action_selection(message: IncomingMessage, bot: Bot) -> None:
+    """Шаг 2: Обрабатываем нажатие кнопки меню."""
+    if message.body == "/add_by_dept":
+        await fsm.set_state(message.sender.huid, AddUserFSM.WAIT_FOR_DEPT)
+        await bot.answer_message(
+            body="Введите часть названия подразделения (например, `сопровожд`):\n"
+                 "*Поиск будет выполнен по полям department, division, extensionAttribute3 и 4*"
+        )
+    else:
+        await bot.answer_message("Пожалуйста, выберите действие с помощью кнопок.")
+
+
+@fsm.on(AddUserFSM.WAIT_FOR_DEPT)
+async def process_dept_search(message: IncomingMessage, bot: Bot) -> None:
+    """Шаг 3: Ищем подразделение в AD и Express."""
+    search_str = message.body.strip()
+    
+    if len(search_str) < 3:
+        await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
+        return
+        
+    await bot.answer_message(f"⏳ Выполняю поиск по подразделениям в Active Directory по запросу «{search_str}»...")
+    
+    try:
+        # 1. Поиск в AD
+        ad_results = await search_ad_departments(search_str)
+        
+        if not ad_results:
+            await bot.answer_message(f"По запросу «{search_str}» подразделений в AD не найдено. Попробуйте другую часть названия.")
+            return
+            
+        # Формируем красивый вывод
+        reply_lines = ["**Найдено в Active Directory:**"]
+        for dept, count in ad_results.items():
+            reply_lines.append(f"• {dept} — {count} чел.")
+            
+        # 2. Выгрузка из Express
+        await bot.answer_message(body="\n".join(reply_lines))
+        await bot.answer_message(body="⏳ Подсчитываю общее количество активных пользователей в Express...")
+        
+        express_count = await count_express_users()
+        
+        await bot.answer_message(
+            body=f"📊 **Сводка по Express:**\nВсего активных пользователей в мессенджере: {express_count} чел.\n\n"
+                 f"*(Дальше мы сделаем кнопки для выбора конкретного подразделения из списка)*"
+        )
+        
+    except Exception as e:
+        await bot.answer_message(body=f"❌ Произошла ошибка при поиске: `{e}`")
+
+
+# Дефолтный обработчик для тех, кто не в состоянии диалога
+@collector.default_message_handler
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    await bot.answer_message(body="Введите `/start`, чтобы начать работу с ботом.")
