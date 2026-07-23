@@ -1,3 +1,77 @@
+[tool.poetry]
+name = "invite-v2-bot"
+version = "0.1.0"
+description = "Бот для добавления пользователей в чаты и каналы в eXpress"
+authors = ["BorodinES <BorodinES@akbars.ru>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[[tool.poetry.source]]
+name = "artifactory"
+url = "https://artifactory.akbars.tech/artifactory/api/pypi/pypi/simple"
+priority = "primary"
+
+[tool.poetry.dependencies]
+python = ">=3.12, <3.13"
+hypercorn = "==0.17.3"
+httpx = "==0.28.1"
+pybotx = "==0.75.1"
+fastapi = {version = "0.115.6", extras = ["standard"]}
+
+[tool.poetry.group.dev.dependencies]
+black = "==24.4.2"
+isort = "==5.13.2"
+pytest = "==8.2.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 119
+
+[tool.isort]
+src_paths = ["src"]
+line_length = 119
+profile = "black"
+
+[tool.pytest.ini_options]
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+pythonpath = ["src"]
+
+RG artifactory_url="artifactory.akbars.tech"
+ARG docker_registry="${artifactory_url}/common-docker-local/trustedimages/alpine/"
+ARG docker_builder_tag="3.12-alpine-abdt"
+
+# --- Этап 1: Сборка ---
+FROM ${docker_registry}python:${docker_builder_tag} as builder
+
+RUN apk add --no-cache gcc g++ musl-dev libffi-dev make
+WORKDIR /app
+
+RUN pip3 install --upgrade pip && \
+    pip3 install poetry==2.0.0
+
+COPY ./pyproject.toml ./poetry.lock ./
+RUN poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --no-root
+
+# --- Этап 2: Runtime ---
+FROM ${docker_registry}python:${docker_builder_tag}
+
+RUN apk add --no-cache libffi && mkdir -p /app
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin/hypercorn /usr/local/bin/
+
+COPY src /app/src
+
+ENV PYTHONPATH=/app/src
+ENV TZ="Europe/Moscow"
+
+WORKDIR /app
+
+ENTRYPOINT ["hypercorn", "src.main:app", "--bind", "0.0.0.0:8000"]
 ModuleNotFoundError: No module named 'ldap3'
 Process SpawnProcess-1:
 Traceback (most recent call last):
