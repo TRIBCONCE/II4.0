@@ -7,4 +7,35 @@
 • Управление сопровождения прикладных систем — 31 чел.
 • Отдел сопровождения серверов — 12 чел.
 
-Теперь как будем искать пользователей вот тут очень важно ибо работать будем через Эктив директори
+Теперь как будем искать пользователей вот тут очень важно ибо работать будем через Эктив директори следовательно выгрузим всех пользователей выгрузим из эктив директори но в обзор попадут пользователи вот по такому фильтру:  
+$AllUsersOn = Get-ADUser `
+        -Filter { enabled -eq $true } `
+        -Properties department,division,extensionAttribute3,extensionAttribute4, samaccountname, displayName, name, whenCreated, employeeType 
+
+$sam = ([string]$User.samaccountname).Trim()
+        $name = $User.name
+        $dn = $User.DistinguishedName
+
+		if (
+			$User.whenCreated -gt $LimitDate -or
+			(@("service","vendor") -contains ([string]$User.employeeType).Trim().ToLower()) -or
+
+			$sam -like "Health*" -or
+			$sam -like "audit*" -or
+			$sam -like "esas*" -or
+			$sam -like "a-*" -or
+			$sam -like "z-*" -or
+			$name -like "*`$*" -or
+			$name -like "*Администратор*" -or
+			$name -like "*Тестовая*" -or
+			$dn -like "*Отключенные пользователи*" -or
+			$dn -like "*сторон*"
+
+смотри теперь как будем считывать информацию вот пользователь написал в чат: в самом начале пройдёмся по параметру department, сосчитаем всех подходящих, потом по division, потом по extensionAttribute3, extensionAttribute4
+Подключение к эктив директори идёт через ldap 389.
+
+Всё потом выводится информация Найдено:
+• Управление сопровождения прикладных систем — 31 чел.
+• Отдел сопровождения серверов — 12 чел.
+
+Дальше пусть запустится скрипт который считает всех пользователей экспресс и тоже выведится информация и пока на этом всё кнопки будем делать дальше ибо надо проверить будет как работать будет вот этот функционал.
