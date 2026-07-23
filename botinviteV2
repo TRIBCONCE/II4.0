@@ -1,80 +1,172 @@
- Отладочная информация!
-Вот как библиотека видит твое сообщение:
-{
-  "bot": "BotAccount(id=UUID('82c5d19e-ff68-509a-a189-f5ccf2bce9a3'), host='24.akbars.ru')",
-  "raw_command": {
-    "command": {
-      "data": {},
-      "metadata": {},
-      "body": "",
-      "command_type": "user"
-    },
-    "from": {
-      "device": "2061",
-      "host": "24.akbars.ru",
-      "username": "Бородин Егор Сергеевич",
-      "user_huid": "0c6bdb15-3d93-50b6-bb47-38c740ea673a",
-      "group_chat_id": "8eae0a8b-c2fb-002c-1ace-cd0bb2568e99",
-      "chat_type": "chat",
-      "ad_login": "borodines",
-      "ad_domain": "abb-win",
-      "manufacturer": "vivo",
-      "device_software": "Android 12 / SDK: 31",
-      "device_meta": {
-        "permissions": {
-          "contacts": true,
-          "microphone": true,
-          "notifications": true,
-          "storage": true
-        },
-        "pushes": true,
-        "timezone": "Europe/Moscow"
-      },
-      "platform": "android",
-      "platform_package_id": "ru.unlimitedtech.express",
-      "app_version": "3.67.34+release",
-      "locale": "ru",
-      "user_udid": "27944cee-19d6-48dc-8547-7194ea38c28b",
-      "is_admin": true,
-      "is_creator": true,
-      "source_server_id": "35bdc421-0b0e-5b32-b069-a8a4b8818da1"
-    },
-    "bot_id": "82c5d19e-ff68-509a-a189-f5ccf2bce9a3",
-    "sync_id": "859db123-943f-42a8-af5b-4bb7b4a648db",
-    "proto_version": 4,
-    "source_sync_id": null,
-    "entities": [
-      {
-        "data": {
-          "mention_data": {
-            "name": "ИЗБРАННОЕ",
-            "group_chat_id": "8470f9a5-c3fe-5a3a-94bc-e848b2fb9261"
-          },
-          "mention_type": "chat",
-          "mention_id": "5ed73711-c67d-483f-8b8e-a906c49fb953"
-        },
-        "type": "mention"
-      }
-    ],
-    "attachments": [],
-    "async_files": []
-  },
-  "sync_id": "859db123-943f-42a8-af5b-4bb7b4a648db",
-  "source_sync_id": null,
-  "body": "",
-  "data": {},
-  "metadata": {},
-  "sender": "UserSender(huid=UUID('0c6bdb15-3d93-50b6-bb47-38c740ea673a'), udid=UUID('27944cee-19d6-48dc-8547-7194ea38c28b'), ad_login='borodines', ad_domain='abb-win', username='Бородин Егор Сергеевич', is_chat_admin=True, is_chat_creator=True, device=UserDevice(manufacturer='vivo', device_name='2061', os='Android 12 / SDK: 31', pushes=True, timezone='Europe/Moscow', permissions={'contacts': True, 'microphone': True, 'notifications': True, 'storage': True}, platform=<ClientPlatforms.ANDROID: 'ANDROID'>, platform_package_id='ru.unlimitedtech.express', app_version='3.67.34+release', locale='ru'))",
-  "chat": "Chat(id=UUID('8eae0a8b-c2fb-002c-1ace-cd0bb2568e99'), type=<ChatTypes.PERSONAL_CHAT: 'PERSONAL_CHAT'>)",
-  "mentions": [
-    "##ИЗБРАННОЕ"
-  ],
-  "forward": null,
-  "reply": null,
-  "file": null,
-  "location": null,
-  "contact": null,
-  "link": null,
-  "sticker": null,
-  "state": "namespace()"
-}
+# src/handlers/testhandlers.py
+
+import hmac
+import hashlib
+import httpx
+from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
+
+from src.config import settings
+
+collector = HandlerCollector()
+
+# ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ API ──────────────────────────────────────
+
+async def get_botx_token(bot_id_str: str, cts_url: str) -> str:
+    """Генерирует подпись и получает токен для работы с BotX API."""
+    secret_bytes = settings.express.secret_key.encode('utf-8')
+    bot_id_bytes = bot_id_str.encode('utf-8')
+    signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
+    
+    async with httpx.AsyncClient() as client:
+        token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
+        resp = await client.get(token_url)
+        resp.raise_for_status()
+        
+        token = resp.json().get("result")
+        if not token:
+            raise ValueError("Сервер не вернул токен")
+        return token
+
+
+async def check_bot_admin_rights(bot: Bot, chat_id_str: str, chat_name: str) -> str:
+    """Проверяет права бота в конкретном чате."""
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    
+    try:
+        token = await get_botx_token(bot_id_str, cts_url)
+        
+        async with httpx.AsyncClient() as client:
+            info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            
+            info_resp = await client.get(info_url, headers=headers)
+            
+            if info_resp.status_code in (403, 404):
+                return (f"❌ Ошибка! Меня нет в канале **{chat_name}**.\n\n"
+                        f"*Бот видит только те каналы и группы, в которых он уже состоит как администратор. "
+                        f"Добавьте бота туда и назначьте ему права администратора, затем повторите поиск.*")
+                
+            info_resp.raise_for_status()
+            chat_data = info_resp.json().get("result", {})
+            
+            is_admin = False
+            for member in chat_data.get("members", []):
+                if str(member.get("user_huid")) == bot_id_str:
+                    is_admin = member.get("admin", False)
+                    break
+            
+            real_chat_name = chat_data.get("name", chat_name)
+            
+            if is_admin:
+                return f"✅ Я админ и добавлен в канал: **{real_chat_name}**"
+            else:
+                return f"⚠️ Я есть в канале **{real_chat_name}**, но у меня НЕТ прав администратора."
+                
+    except Exception as e:
+        return f"❌ Ошибка при проверке прав: `{e}`"
+
+
+# ─── ХЕНДЛЕРЫ КОМАНД ──────────────────────────────────────────────────────
+
+@collector.command("/start", description="Запуск бота")
+async def start_handler(message: IncomingMessage, bot: Bot) -> None:
+    markup = BubbleMarkup()
+    markup.add_button(command="/check_admin", label="Проверить права в канале")
+    markup.add_button(command="/get_users", label="Выгрузить базу")
+
+    await bot.answer_message(
+        body="Привет! Выбери действие:",
+        bubbles=markup,
+    )
+
+
+@collector.command("/check_admin", visible=False)
+async def check_admin_handler(message: IncomingMessage, bot: Bot) -> None:
+    await bot.answer_message(
+        body="Пришли мне название целевого канала или группы в формате `##имяканала`.\n\n"
+             "*Обязательно выбери нужный канал из всплывающей подсказки мессенджера!*"
+    )
+
+
+@collector.command("/get_users", visible=False)
+async def get_users_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Скачивает CSV с пользователями и выводит статистику."""
+    await bot.answer_message(body="⏳ Запрашиваю базу пользователей у сервера. Это может занять несколько секунд...")
+    
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    
+    try:
+        token = await get_botx_token(bot_id_str, cts_url)
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
+            headers = {"Authorization": f"Bearer {token}"}
+            # Параметры из доки: берем только cts_user, откидываем ботов
+            params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
+            
+            resp = await client.get(csv_url, headers=headers, params=params)
+            resp.raise_for_status()
+            
+            # Разделяем ответ на строки
+            csv_lines = resp.text.strip().split('\n')
+            
+            # Первая строка — это заголовки. Считаем пользователей:
+            total_users = len(csv_lines) - 1 if len(csv_lines) > 0 else 0
+            
+            # (Опционально) Посчитаем только активных
+            active_count = 0
+            for line in csv_lines[1:]:
+                # В CSV колонки: HUID, AD Login, Domain, AD E-mail, Name, Sync source, Active...
+                # Флаг Active - 7-я колонка (индекс 6)
+                columns = line.split(',')
+                if len(columns) > 6 and columns[6].strip().lower() == "true":
+                    active_count += 1
+
+            await bot.answer_message(
+                body=f"✅ База успешно выгружена!\n\n"
+                     f"Всего пользователей: **{total_users}**\n"
+                     f"Из них активных: **{active_count}**\n\n"
+                     f"База готова для поиска по отделам (Сценарий B)."
+            )
+            
+    except Exception as e:
+        await bot.answer_message(body=f"❌ Произошла ошибка при скачивании базы:\n`{e}`")
+
+
+@collector.default_message_handler
+async def default_handler(message: IncomingMessage, bot: Bot) -> None:
+    """Ловит упоминания каналов для проверки прав."""
+    chat_id = None
+    chat_name = "Неизвестный канал"
+    
+    try:
+        raw_cmd = getattr(message, "raw_command", {})
+        if hasattr(raw_cmd, "dict"):
+            raw_cmd = raw_cmd.dict()
+        elif not isinstance(raw_cmd, dict):
+            raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
+            
+        entities = raw_cmd.get("entities", [])
+        
+        for entity in entities:
+            e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
+            if e_dict.get("type") == "mention":
+                data = e_dict.get("data", {})
+                if data.get("mention_type") in ("chat", "channel"):
+                    m_data = data.get("mention_data", {})
+                    chat_id = m_data.get("group_chat_id")
+                    chat_name = m_data.get("name", chat_name)
+                    break
+    except Exception:
+        pass
+
+    if chat_id:
+        await bot.answer_message(body=f"⏳ Проверяю права для канала **{chat_name}**...")
+        result_msg = await check_bot_admin_rights(bot, str(chat_id), chat_name)
+        await bot.answer_message(body=result_msg)
+    else:
+        await bot.answer_message(
+            body="Команда не распознана. Для меню используй `/start`."
+        )
