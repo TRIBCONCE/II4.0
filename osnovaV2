@@ -1,10 +1,36 @@
-try:
-            # Правильно распаковываем кортеж из двух элементов:
-            ad_results, debug_text = await search_ad_departments(search_str)
-            
-            # Сначала отправляем отладочную информацию
-            await bot.answer_message(body=f"🕵️‍♂️ **Дебаг поиска:**\n{debug_text}")
-            
-            if not ad_results:
-                await bot.answer_message(f"По запросу «{search_str}» целевых подразделений не найдено. Попробуйте другую часть названия.")
-                return
+def search_ad_departments_sync(search_str: str) -> tuple:
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
+
+    search_str = search_str.lower()
+    
+    # 🌟 МАГИЯ: Автоматически получаем правильный корень домена (например, DC=abb-win,DC=akbars,DC=ru)
+    # Если сервер вдруг его не отдаст, используем хардкод как запасной вариант
+    try:
+        real_search_base = server.info.other.get('defaultNamingContext')[0]
+    except Exception:
+        real_search_base = "DC=abb-win,DC=akbars,DC=ru" 
+
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType',
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4',
+        'distinguishedName'
+    ]
+
+    debug_log = [
+        f"🔎 **Search Base:** `{real_search_base}`",
+        f"🛠 **LDAP Фильтр:**\n`{ldap_filter}`"
+    ]
+
+    # Используем real_search_base вместо старой переменной
+    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    # ... ДАЛЬШЕ ВЕСЬ КОД ФУНКЦИИ ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ ...
