@@ -1,5 +1,1 @@
-  File "/app/src/bot.py", line 9, in <module>
-    from handlers import testhandlers
-  File "/app/src/handlers/testhandlers.py", line 10, in <module>
-    from pybotx_fsm import FSMCollector, FSMMachine, State, MemoryStorage
-ImportError: cannot import name 'FSMMachine' from 'pybotx_fsm' (/usr/local/lib/python3.12/site-packages/pybotx_fsm/__init__.py)
+ Произошла ошибка при поиске: invalid server address
