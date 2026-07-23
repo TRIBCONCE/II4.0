@@ -4,6 +4,126 @@ import hmac
 import hashlib
 import httpx
 import asyncio
+import ssl  # Обязательно добавляем модуль ssl
+from ldap3 import Server, Connection, ALL, SUBTREE, Tls # Добавляем Tls
+from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
+from pybotx_fsm import FSMCollector, FSMMachine, State, MemoryStorage
+
+from src.config import settings
+
+# ─── ИНИЦИАЛИЗАЦИЯ FSM ────────────────────────────────────────────────────
+storage = MemoryStorage()
+fsm = FSMCollector(storage)
+collector = HandlerCollector()
+collector.include(fsm)
+
+class AddUserFSM(FSMMachine):
+    WAIT_FOR_CHANNEL = State()
+    WAIT_FOR_ACTION = State()
+    WAIT_FOR_DEPT = State()
+
+
+# ─── 1. ЛОГИКА ACTIVE DIRECTORY (LDAP) ────────────────────────────────────
+
+# TODO: Вставь сюда данные сервисной учетки (лучше вынести в .env)
+LDAP_USER = "abb-win\\service_account"
+LDAP_PASSWORD = "your_password"
+LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
+
+def search_ad_departments_sync(search_str: str) -> dict:
+    """
+    Синхронная функция для поиска в AD. 
+    Она будет выполняться в отдельном потоке, чтобы не блокировать бота.
+    """
+    # Настраиваем TLS согласно твоим параметрам
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    
+    # Подключаемся к abb-win.akbars.ru по безопасному порту 636
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True)
+    
+    search_str = search_str.lower()
+    
+    # Ищем только активные учетки
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+    
+    attributes = [
+        'sAMAccountName', 'name', 'displayName', 'employeeType', 
+        'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 
+        'distinguishedName'
+    ]
+    
+    conn.search(search_base=LDAP_SEARCH_BASE, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    results = {}
+    
+    for entry in conn.entries:
+        # Извлекаем значения и приводим к нижнему регистру для проверок
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+        
+        # ─── Фильтрация исключений (тех. учетки, вендоры и т.д.) ───
+        if (
+            emp_type in ["service", "vendor"] or
+            sam.startswith("health") or
+            sam.startswith("audit") or
+            sam.startswith("esas") or
+            sam.startswith("a-") or
+            sam.startswith("z-") or
+            "$" in name or
+            "администратор" in name or
+            "тестовая" in name or
+            "отключенные пользователи" in dn or
+            "сторон" in dn
+        ):
+            continue
+            
+        # Находим, в каком именно поле было совпадение
+        dept_name = "Неизвестное подразделение"
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = getattr(entry, attr).value if hasattr(entry, attr) else None
+            if val and search_str in str(val).lower():
+                dept_name = str(val)
+                break
+                
+        # Считаем количество людей в подразделении
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
+        
+    conn.unbind()
+    return results
+
+
+async def search_ad_departments(search_str: str) -> dict:
+    """
+    Асинхронная обертка. 
+    Запускает синхронную функцию LDAP в отдельном пуле потоков (ThreadPoolExecutor).
+    Бот не "зависает" во время ожидания ответа от контроллера домена.
+    """
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+
+# ─── ДАЛЬШЕ ИДЕТ КОД get_botx_token И ХЕНДЛЕРЫ БЕЗ ИЗМЕНЕНИЙ ──────────────
+
+
+
+
+
+
+# src/handlers/testhandlers.py
+
+import hmac
+import hashlib
+import httpx
+import asyncio
 from ldap3 import Server, Connection, ALL, SUBTREE
 from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
 from pybotx_fsm import FSMCollector, FSMMachine, State, MemoryStorage
