@@ -1,5 +1,5 @@
 async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
-    """Добавляет пользователей пачками по 500. Возвращает (успех, ошибки, детали_ошибок)"""
+    """Добавляет пользователей пачками по 500 через проверенный эндпоинт add_user."""
     bot_id_str = str(settings.express.uuid)
     cts_url = str(settings.express.cts_url).rstrip("/")
     token = await get_botx_token(bot_id_str, cts_url)
@@ -10,140 +10,30 @@ async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
     chunk_size = 500
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        add_url = f"{cts_url}/api/v3/botx/chats/members"
+        # Тот самый 100% рабочий эндпоинт из твоего примера
+        add_url = f"{cts_url}/api/v3/botx/chats/add_user"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
         for i in range(0, len(huids), chunk_size):
             chunk = huids[i:i + chunk_size]
+            
+            # Строго тот payload, который ты прислал: плоский список строк
             payload = {
                 "group_chat_id": chat_id,
-                "members": [{"user_huid": h} for h in chunk]
+                "user_huids": chunk
             }
+            
             try:
                 resp = await client.post(add_url, headers=headers, json=payload)
+                
+                # Коды 200 (OK), 201 (Created), 204 (No Content) считаем успехом
                 if resp.status_code in (200, 201, 204):
                     success_count += len(chunk)
                 else:
                     error_count += len(chunk)
-                    # Собираем текст ответа от сервера, чтобы понять причину
                     error_details.append(f"HTTP {resp.status_code}: {resp.text}")
             except Exception as e:
                 error_count += len(chunk)
-                error_details.append(f"Ошибка сети/кода: {str(e)}")
+                error_details.append(f"Ошибка сети: {str(e)}")
                 
     return success_count, error_count, error_details
-
-
-# ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА (ПРОВЕРКА НА ДУРАКА) ───
-    elif current_state == "WAIT_FOR_DEPT_SELECTION":
-        if msg_text == "/cancel_dept":
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
-            await bot.answer_message(body="Введите часть названия подразделения (например, `сопровожд`):")
-            return
-            
-        if not msg_text.startswith("/select_dept "):
-            await bot.answer_message("Пожалуйста, нажмите на одну из кнопок.")
-            return
-
-        # Достаем точное название отдела
-        dept_name = msg_text.replace("/select_dept ", "").strip()
-        
-        # Сохраняем выбранный отдел и переводим в статус подтверждения
-        USER_STATES[user_huid]["selected_dept"] = dept_name
-        USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION"
-
-        markup = BubbleMarkup()
-        markup.add_button(command="/confirm_add", label="Да, добавить")
-        markup.add_button(command="/cancel_add", label="Нет, отмена")
-        
-        await bot.answer_message(
-            body=f"Вы точно хотите добавить пользователей подразделения **{dept_name}**?",
-            bubbles=markup
-        )
-        return
-
-    # ─── ШАГ 4: ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ ───
-    elif current_state == "WAIT_FOR_CONFIRMATION":
-        if msg_text == "/cancel_add":
-            # Возвращаем в главное меню
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(
-                body="❌ Операция отменена.\n\nВыберите следующее действие:", 
-                bubbles=get_main_menu_markup()
-            )
-            return
-            
-        if msg_text != "/confirm_add":
-            await bot.answer_message("Пожалуйста, нажмите «Да, добавить» или «Нет, отмена».")
-            return
-
-        dept_name = user_data.get("selected_dept")
-        chat_id = user_data.get("target_chat_id")
-        chat_name = user_data.get("target_chat_name")
-        current_members = user_data.get("chat_members", set())
-
-        await bot.answer_message(f"⏳ Сверяю базу и добавляю пользователей в **{chat_name}**...")
-
-        try:
-            ad_users = await get_ad_users_by_dept(dept_name)
-            express_db = await get_express_users_dict()
-
-            huids_to_add = []
-            already_in_chat_count = 0
-            skipped_users = [] 
-
-            for ad_u in ad_users:
-                email = ad_u["email"]
-                name = ad_u["name"]
-                
-                if email in express_db and express_db[email]["active"]:
-                    huid = express_db[email]["huid"]
-                    if huid in current_members:
-                        already_in_chat_count += 1
-                    else:
-                        huids_to_add.append(huid)
-                else:
-                    skipped_users.append(name)
-
-            success_add = 0
-            error_add = 0
-            error_details = []
-            
-            # Выполняем добавление пачками
-            if huids_to_add:
-                success_add, error_add, error_details = await add_members_to_chat_batch(chat_id, huids_to_add)
-
-            # Формируем отчет
-            report = (
-                f"Готово. Результат добавления в **{chat_name}**:\n\n"
-                f"✅ Успешно добавлено: {success_add}\n"
-                f"⚠️ Уже были в канале: {already_in_chat_count}\n"
-                f"❌ Ошибки при добавлении: {error_add}\n"
-                f"🚫 Пропущено (не в eXpress / неактивные): {len(skipped_users)}\n"
-            )
-            
-            # Если были ошибки от API, выводим их
-            if error_details:
-                # Убираем дубликаты одинаковых ошибок с помощью set()
-                err_str = "\n".join(f"• {e}" for e in set(error_details))
-                # Обрезаем, чтобы сообщение не превысило лимит символов в eXpress
-                if len(err_str) > 1000: 
-                    err_str = err_str[:1000] + "...\n(текст обрезан)"
-                report += f"\n**Детали ошибок API:**\n`{err_str}`\n"
-
-            if skipped_users:
-                report += "\n**Список пропущенных:**\n" + "\n".join(f"• {u}" for u in skipped_users[:30])
-                if len(skipped_users) > 30:
-                    report += f"\n*(И еще {len(skipped_users) - 30} сотрудников...)*"
-
-            # Сбрасываем состояние на главное меню
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            
-            await bot.answer_message(body=report)
-            await bot.answer_message(body="Выберите следующее действие:", bubbles=get_main_menu_markup())
-
-        except Exception as e:
-            await bot.answer_message(body=f"❌ **Произошла системная ошибка при добавлении:**\n`{e}`")
-            
-        return
-
