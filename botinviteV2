@@ -1,41 +1,11 @@
-# src/handlers/testhandlers.py
-
-import hmac
-import traceback
-import hashlib
-import httpx
-import asyncio
-import ssl  # Обязательно добавляем модуль ssl
-from ldap3 import Server, Connection, ALL, SUBTREE, Tls  # Добавляем Tls
-from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
-
-from src.config import settings
-
-# ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
-collector = HandlerCollector()
-
-# Наша собственная безотказная FSM!
-# Формат: { "user_huid": {"state": "ШАГ", "chat_id": "...", "chat_name": "..."} }
-USER_STATES = {}
-
-
-# ─── 1. ЛОГИКА ACTIVE DIRECTORY (LDAP) ────────────────────────────────────
-
-# TODO: Вставь сюда данные сервисной учетки (лучше вынести в .env)
-LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "скрыл"
-LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
-
-
-def search_ad_departments_sync(search_str: str) -> tuple:
+def search_ad_departments_sync(search_str: str) -> dict:
     tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
     server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
     conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
 
     search_str = search_str.lower()
 
-    # 🌟 МАГИЯ: Автоматически получаем правильный корень домена (например, DC=abb-win,DC=akbars,DC=ru)
-    # Если сервер вдруг его не отдаст, используем хардкод как запасной вариант
+    # Автоматически получаем правильный корень домена
     try:
         real_search_base = server.info.other.get('defaultNamingContext')[0]
     except Exception:
@@ -54,35 +24,15 @@ def search_ad_departments_sync(search_str: str) -> tuple:
         'distinguishedName'
     ]
 
-    debug_log = [
-        f"🔎 **Search Base:** `{real_search_base}`",
-        f"🛠 **LDAP Фильтр:**\n`{ldap_filter}`"
-    ]
-
-    # Используем real_search_base вместо старой переменной
     conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
 
-    debug_log.append(f"📦 **Сервер AD нашел записей:** {len(conn.entries)}")
-
     results = {}
-    skipped_count = 0
 
-    for i, entry in enumerate(conn.entries):
+    for entry in conn.entries:
         sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
         name = str(entry.name.value).lower() if entry.name else ""
         dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
         emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
-
-        # Для первых двух найденных записей выводим их сырые данные в лог
-        if i < 2:
-            debug_log.append(
-                f"\n👤 **Пример сырой записи из AD:**\n"
-                f"- name: `{name}`\n"
-                f"- SAM: `{sam}`\n"
-                f"- Type: `{emp_type}`\n"
-                f"- Dept: `{getattr(entry, 'department', 'Пусто')}`\n"
-                f"- Div: `{getattr(entry, 'division', 'Пусто')}`"
-            )
 
         # Проверка наших исключений
         if (
@@ -92,7 +42,6 @@ def search_ad_departments_sync(search_str: str) -> tuple:
                 "$" in name or "администратор" in name or "тестовая" in name or
                 "отключенные пользователи" in dn or "сторон" in dn
         ):
-            skipped_count += 1
             continue
 
         dept_name = "Неизвестное подразделение"
@@ -106,14 +55,8 @@ def search_ad_departments_sync(search_str: str) -> tuple:
             results[dept_name] = 0
         results[dept_name] += 1
 
-    debug_log.append(f"\n🚫 **Отсеяно нашим Python-фильтром (исключения):** {skipped_count}")
-
     conn.unbind()
-    return results, "\n".join(debug_log)
-
-
-async def search_ad_departments(search_str: str) -> tuple:
-    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+    return results
 
 
 async def search_ad_departments(search_str: str) -> dict:
@@ -181,13 +124,11 @@ async def count_express_users() -> int:
         return active_count
 
 
-# ─── 3. ХЕНДЛЕРЫ ДИАЛОГА (БЕЗ ВНЕШНИХ БИБЛИОТЕК FSM) ──────────────────────
+# ─── 3. ХЕНДЛЕРЫ ДИАЛОГА ──────────────────────────────────────────────────
 
 @collector.command("/start", description="Запуск бота")
 async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-
-    # Шаг 1: Устанавливаем статус ожидания канала
     USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
 
     await bot.answer_message(
@@ -202,17 +143,14 @@ async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
     user_data = USER_STATES.get(user_huid, {})
 
-    # Проверяем, что пользователь прошел Шаг 1
     if user_data.get("state") != "WAIT_FOR_ACTION":
         await bot.answer_message("Сначала выберите канал с помощью команды /start.")
         return
 
-    # Шаг 3: Переводим в ожидание ввода подразделения
     USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
 
     await bot.answer_message(
         body="Введите часть названия подразделения (например, `сопровожд`):\n"
-             "*Поиск будет выполнен по полям department, division, extensionAttribute3 и 4*"
     )
 
 
@@ -227,7 +165,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         chat_id = None
         chat_name = "Неизвестный канал"
 
-        # Парсим ID канала
         raw_cmd = getattr(message, "raw_command", {})
         if hasattr(raw_cmd, "dict"):
             raw_cmd = raw_cmd.dict()
@@ -251,7 +188,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         status = await check_bot_admin_rights(bot, str(chat_id), chat_name)
 
         if status == "ADMIN":
-            # Шаг 2: Успех! Переводим в состояние выбора действия и сохраняем ID чата
             USER_STATES[user_huid]["target_chat_id"] = str(chat_id)
             USER_STATES[user_huid]["target_chat_name"] = chat_name
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
@@ -268,7 +204,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         else:
             await bot.answer_message(
                 f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
-
         return
 
     # ─── ЕСЛИ ЖДЕМ ВВОДА НАЗВАНИЯ ПОДРАЗДЕЛЕНИЯ ───
@@ -282,18 +217,15 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         await bot.answer_message(f"⏳ Выполняю поиск в Active Directory по запросу «{search_str}»...")
 
         try:
-            # Правильно распаковываем кортеж из двух элементов:
-            ad_results, debug_text = await search_ad_departments(search_str)
-
-            # Сначала отправляем отладочную информацию
-            await bot.answer_message(body=f"🕵️‍♂️ **Дебаг поиска:**\n{debug_text}")
+            ad_results = await search_ad_departments(search_str)
 
             if not ad_results:
                 await bot.answer_message(
                     f"По запросу «{search_str}» целевых подразделений не найдено. Попробуйте другую часть названия.")
                 return
 
-            reply_lines = ["**Найдено в Active Directory:**"]
+            # Формируем итоговый чистый вывод
+            reply_lines = ["**Найдено:**"]
             for dept, count in ad_results.items():
                 reply_lines.append(f"• {dept} — {count} чел.")
 
@@ -304,23 +236,31 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
             await bot.answer_message(
                 body=f"📊 **Сводка по Express:**\nВсего активных пользователей в мессенджере: {express_count} чел.\n\n"
-                     f"*(Дальше мы сделаем кнопки для выбора конкретного подразделения из списка)*"
             )
 
         except Exception as e:
-            # Получаем полный стек вызова ошибки
-            error_details = traceback.format_exc()
-
-            # Обрезаем, если текст слишком длинный для Express (оставляем последние 3500 символов)
-            if len(error_details) > 3500:
-                error_details = "..." + error_details[-3500:]
-
-            await bot.answer_message(
-                body=f"❌ **Произошла ошибка при поиске:**\n`{e}`\n\n"
-                     f"🕵️‍♂️ **Трассировка для отладки:**\n```python\n{error_details}\n```"
-            )
+            await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
 
         return
 
     # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
-    await bot.answer_message(body="Введите `/start`, чтобы начать работу с ботом.")
+    await bot.answer_message(body="Введите `/start`, чтобы начать работу с ботом.") И так смотри вот код который выдаёт информацию по каждому отделу, теперь вывод должен быть не текстом а кнопками условно было так 
+Найдено:
+• Центр сопровождения расчетных операций — 179 чел.
+• Центр сопровождения кредитных операций — 136 чел.
+• Дирекция правового сопровождения — 78 чел.
+• Управление сопровождения корпоративных и инвестиционных продуктов — 38 чел.
+• Центр сопровождения инвестиционных операций — 18 чел.
+• Управление сопровождения прикладных систем — 28 чел.
+• Отдел сопровождения региональной сети — 4 чел.
+• Отдел сопровождения бизнеса — 5 чел.
+• Центр сопровождения и дистанционного контроля кассовых операций — 21 чел.
+• Отдел инженерного сопровождения — 27 чел.
+• Управление сопровождения розничных продуктов — 48 чел.
+• Центр сопровождения и поддержки центров компетенций — 10 чел.
+• Отдел документарного  сопровождения — 1 чел.
+• Управление непрерывного сопровождения и мониторинга ИТ — 40 чел.
+• Центр сопровождения локальных рабочих мест — 1 чел.
+• Отдел сопровождения устройств самообслуживания — 11 чел.
+Это выводилось текстом теперь должны выводиться кнопки с таким же текстом, при нажатии на кнопки с определённым отделом, давай будем выводить почту каждого сотрудника этого отдела при этом надо делать так берётся человек из эктив директори потом мы ищим его в експресе по атрибуту почты и если такой есть он добавляется в список, потом весь список выводится,
+Я нажал на Отдел инженерного сопровождения — 27 чел. мне вывелись 27 почт и сообщение что всё прошло отлично. Я это делаю чтобы потом легче было прописать функции добавления в чаты но пока без них
