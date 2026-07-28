@@ -6,6 +6,7 @@ import httpx
 import asyncio
 import ssl
 from ldap3 import Server, Connection, ALL, SUBTREE, Tls
+from ldap3.utils.conv import escape_filter_chars
 from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
 
 from src.config import settings
@@ -13,7 +14,7 @@ from src.config import settings
 # ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
 collector = HandlerCollector()
 
-# Наша собственная безотказная FSM!
+# Наша собственная FSM!
 # Формат: { "user_huid": {"state": "ШАГ", "chat_id": "...", "chat_name": "..."} }
 USER_STATES = {}
 
@@ -25,18 +26,24 @@ LDAP_USER = "ABB-WIN\\z-BorodinES"
 LDAP_PASSWORD = "твой_пароль"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
-def search_ad_departments_sync(search_str: str) -> dict:
+def _get_ad_connection():
+    """Вспомогательная функция для подключения к AD"""
     tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
     server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
     conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
-
-    search_str = search_str.lower()
-
-    # Автоматически получаем правильный корень домена
+    
     try:
         real_search_base = server.info.other.get('defaultNamingContext')[0]
     except Exception:
         real_search_base = "DC=abb-win,DC=akbars,DC=ru"
+        
+    return conn, real_search_base
+
+
+def search_ad_departments_sync(search_str: str) -> dict:
+    """Ищет подразделения по подстроке и считает количество людей в них"""
+    conn, real_search_base = _get_ad_connection()
+    search_str = search_str.lower()
 
     ldap_filter = (
         f"(&(objectCategory=person)(objectClass=user)"
@@ -45,14 +52,8 @@ def search_ad_departments_sync(search_str: str) -> dict:
         f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
     )
 
-    attributes = [
-        'sAMAccountName', 'name', 'displayName', 'employeeType',
-        'department', 'division', 'extensionAttribute3', 'extensionAttribute4',
-        'distinguishedName'
-    ]
-
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 'distinguishedName']
     conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
-
     results = {}
 
     for entry in conn.entries:
@@ -61,14 +62,10 @@ def search_ad_departments_sync(search_str: str) -> dict:
         dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
         emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
 
-        # Проверка наших исключений
-        if (
-                emp_type in ["service", "vendor"] or
-                sam.startswith("health") or sam.startswith("audit") or
-                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
-                "$" in name or "администратор" in name or "тестовая" in name or
-                "отключенные пользователи" in dn or "сторон" in dn
-        ):
+        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
+            sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+            "$" in name or "администратор" in name or "тестовая" in name or
+            "отключенные пользователи" in dn or "сторон" in dn):
             continue
 
         dept_name = "Неизвестное подразделение"
@@ -86,8 +83,52 @@ def search_ad_departments_sync(search_str: str) -> dict:
     return results
 
 
+def get_ad_users_by_dept_sync(dept_name: str) -> list:
+    """Получает почты сотрудников конкретного подразделения из AD"""
+    conn, real_search_base = _get_ad_connection()
+    
+    # Экранируем спецсимволы, чтобы LDAP не сломался от скобок в названиях отделов
+    safe_dept = escape_filter_chars(dept_name)
+
+    # Ищем точное совпадение по выбранному подразделению
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department={safe_dept})(division={safe_dept})"
+        f"(extensionAttribute3={safe_dept})(extensionAttribute4={safe_dept})))"
+    )
+
+    # Добавляем 'mail' для получения почты!
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'distinguishedName', 'mail']
+    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    emails = []
+
+    for entry in conn.entries:
+        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
+        name = str(entry.name.value).lower() if entry.name else ""
+        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
+        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+
+        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
+            sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+            "$" in name or "администратор" in name or "тестовая" in name or
+            "отключенные пользователи" in dn or "сторон" in dn):
+            continue
+            
+        mail = str(entry.mail.value).strip().lower() if entry.mail else ""
+        if mail:
+            emails.append(mail)
+
+    conn.unbind()
+    return emails
+
+
 async def search_ad_departments(search_str: str) -> dict:
     return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+async def get_ad_users_by_dept(dept_name: str) -> list:
+    return await asyncio.to_thread(get_ad_users_by_dept_sync, dept_name)
 
 
 # ─── 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ API ───────────────────────────────────────
@@ -129,7 +170,8 @@ async def check_bot_admin_rights(bot: Bot, chat_id_str: str, chat_name: str) -> 
         return "ERROR"
 
 
-async def count_express_users() -> int:
+async def get_express_active_emails() -> set:
+    """Скачивает CSV из Express и возвращает множество почт активных пользователей"""
     bot_id_str = str(settings.express.uuid)
     cts_url = str(settings.express.cts_url).rstrip("/")
     token = await get_botx_token(bot_id_str, cts_url)
@@ -143,12 +185,18 @@ async def count_express_users() -> int:
         resp.raise_for_status()
 
         csv_lines = resp.text.strip().split('\n')
-        active_count = 0
+        active_emails = set()
+        
+        # Разбираем CSV. В Express почта обычно в 4-й колонке (индекс 3)
         for line in csv_lines[1:]:
             columns = line.split(',')
             if len(columns) > 6 and columns[6].strip().lower() == "true":
-                active_count += 1
-        return active_count
+                # Ищем колонку с '@' на случай, если порядок поменяется
+                for col in columns:
+                    if "@" in col:
+                        active_emails.add(col.strip().lower())
+                        break
+        return active_emails
 
 
 # ─── 3. ХЕНДЛЕРЫ ДИАЛОГА ──────────────────────────────────────────────────
@@ -175,11 +223,7 @@ async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
         return
 
     USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
-
-    await bot.answer_message(
-        body="Введите часть названия подразделения (например, `сопровожд`):\n"
-             "*Поиск будет выполнен по полям department, division, extensionAttribute3 и 4*"
-    )
+    await bot.answer_message(body="Введите часть названия подразделения (например, `сопровожд`):")
 
 
 @collector.default_message_handler
@@ -188,16 +232,13 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     user_data = USER_STATES.get(user_huid, {})
     current_state = user_data.get("state")
 
-    # ─── ЕСЛИ ЖДЕМ ВВОДА КАНАЛА ───
+    # ─── ШАГ 1: ПОЛУЧЕНИЕ КАНАЛА ───
     if current_state == "WAIT_FOR_CHANNEL":
         chat_id = None
         chat_name = "Неизвестный канал"
-
         raw_cmd = getattr(message, "raw_command", {})
-        if hasattr(raw_cmd, "dict"):
-            raw_cmd = raw_cmd.dict()
-        elif not isinstance(raw_cmd, dict):
-            raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
+        if hasattr(raw_cmd, "dict"): raw_cmd = raw_cmd.dict()
+        elif not isinstance(raw_cmd, dict): raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
 
         for entity in raw_cmd.get("entities", []):
             e_dict = entity.dict() if hasattr(entity, "dict") else (entity if isinstance(entity, dict) else {})
@@ -219,24 +260,18 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             USER_STATES[user_huid]["target_chat_id"] = str(chat_id)
             USER_STATES[user_huid]["target_chat_name"] = chat_name
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-
             markup = BubbleMarkup()
             markup.add_button(command="/add_by_dept", label="Добавить по подразделению")
-
-            await bot.answer_message(
-                body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nЧто будем делать дальше?",
-                bubbles=markup
-            )
+            await bot.answer_message(body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nЧто будем делать дальше?", bubbles=markup)
         elif status == "MEMBER":
             await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
         else:
             await bot.answer_message(f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
         return
 
-    # ─── ЕСЛИ ЖДЕМ ВВОДА НАЗВАНИЯ ПОДРАЗДЕЛЕНИЯ ───
+    # ─── ШАГ 2: ВВОД СЛОВА ДЛЯ ПОИСКА ───
     elif current_state == "WAIT_FOR_DEPT":
         search_str = message.body.strip()
-
         if len(search_str) < 3:
             await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
             return
@@ -245,29 +280,70 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
         try:
             ad_results = await search_ad_departments(search_str)
-
             if not ad_results:
-                await bot.answer_message(f"По запросу «{search_str}» целевых подразделений не найдено. Попробуйте другую часть названия.")
+                await bot.answer_message(f"По запросу «{search_str}» целевых подразделений не найдено.")
                 return
 
-            # Формируем итоговый чистый вывод
-            reply_lines = ["**Найдено:**"]
+            # Формируем кнопки вместо текста!
+            markup = BubbleMarkup()
             for dept, count in ad_results.items():
-                reply_lines.append(f"• {dept} — {count} чел.")
+                # Мы передаем название отдела скрытой командой, которую бот поймает на следующем шаге
+                markup.add_button(command=f"/select_dept {dept}", label=f"{dept} — {count} чел.")
 
-            await bot.answer_message(body="\n".join(reply_lines))
-            await bot.answer_message(body="⏳ Подсчитываю общее количество активных пользователей в Express...")
-
-            express_count = await count_express_users()
-
+            # Переключаем состояние на ожидание нажатия кнопки
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT_SELECTION"
+            
             await bot.answer_message(
-                body=f"📊 **Сводка по Express:**\nВсего активных пользователей в мессенджере: {express_count} чел.\n\n"
-                     f"*(Дальше мы сделаем кнопки для выбора конкретного подразделения из списка)*"
+                body="**Найдено:**\nВыберите нужное подразделение из списка:",
+                bubbles=markup
             )
-
         except Exception as e:
             await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
+        return
+
+    # ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА ───
+    elif current_state == "WAIT_FOR_DEPT_SELECTION":
+        if not message.body.startswith("/select_dept "):
+            await bot.answer_message("Пожалуйста, нажмите на одну из кнопок подразделений.")
+            return
             
+        # Достаем точное название отдела из скрытой команды кнопки
+        dept_name = message.body.replace("/select_dept ", "").strip()
+        
+        await bot.answer_message(f"⏳ Собираю сотрудников из подразделения **{dept_name}** и сверяю их почты с базой Express...")
+
+        try:
+            # 1. Достаем почты сотрудников этого отдела из AD
+            ad_emails = await get_ad_users_by_dept(dept_name)
+            
+            if not ad_emails:
+                await bot.answer_message(f"В подразделении **{dept_name}** нет сотрудников с заполненной почтой в Active Directory.")
+                return
+
+            # 2. Скачиваем базу Express и собираем все активные почты
+            express_emails = await get_express_active_emails()
+            
+            # 3. Находим совпадения (пересечение)
+            matched_emails = []
+            for mail in ad_emails:
+                if mail in express_emails:
+                    matched_emails.append(mail)
+
+            if not matched_emails:
+                await bot.answer_message("Ни один сотрудник из этого подразделения не найден в Express (совпадений по email нет).")
+                return
+
+            # 4. Формируем финальный красивый вывод
+            email_list_str = "\n".join(f"• {e}" for e in matched_emails)
+            await bot.answer_message(
+                body=f"✅ **Всё прошло отлично!**\nСотрудники подразделения **{dept_name}** ({len(matched_emails)} чел.) успешно найдены в Express:\n\n{email_list_str}"
+            )
+            
+            # Сохраняем найденный список почт в FSM на будущее (пригодится для функции добавления)
+            USER_STATES[user_huid]["matched_emails"] = matched_emails
+            
+        except Exception as e:
+            await bot.answer_message(body=f"❌ **Произошла ошибка при сверке пользователей:**\n`{e}`")
         return
 
     # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
