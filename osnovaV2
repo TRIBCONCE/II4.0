@@ -14,7 +14,7 @@ from src.config import settings
 # ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
 collector = HandlerCollector()
 
-# FSM: { "user_huid": {"state": "ШАГ", "chat_id": "...", "chat_name": "...", "chat_members": [...]} }
+# FSM: { "user_huid": {"state": "ШАГ", "target_chat_id": "...", "target_chat_name": "...", "chat_members": set(), "selected_dept": "..."} }
 USER_STATES = {}
 
 
@@ -49,8 +49,7 @@ def search_ad_departments_sync(search_str: str) -> dict:
         f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
     )
 
-    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3',
-                  'extensionAttribute4', 'distinguishedName']
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 'distinguishedName']
     conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
     results = {}
 
@@ -76,49 +75,6 @@ def search_ad_departments_sync(search_str: str) -> dict:
         if dept_name not in results:
             results[dept_name] = 0
         results[dept_name] += 1
-
-    conn.unbind()
-    return results
-
-
-def search_ad_company_sync(search_str: str) -> dict:
-    """Ищет компании по подстроке в атрибуте company и считает количество людей"""
-    conn, real_search_base = _get_ad_connection()
-    search_str = search_str.lower()
-
-    # Фильтруем только по атрибуту company
-    ldap_filter = (
-        f"(&(objectCategory=person)(objectClass=user)"
-        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
-        f"(company=*{search_str}*))"
-    )
-
-    attributes = ['sAMAccountName', 'name', 'employeeType', 'company', 'distinguishedName']
-    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
-    results = {}
-
-    for entry in conn.entries:
-        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
-        name = str(entry.name.value).lower() if entry.name else ""
-        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
-        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
-
-        # Применяем те же самые фильтры исключений
-        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
-                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
-                "$" in name or "администратор" in name or "тестовая" in name or
-                "отключенные пользователи" in dn or "сторон" in dn):
-            continue
-
-        comp_name = "Неизвестная компания"
-        if hasattr(entry, 'company') and entry.company:
-            comp_val = str(entry.company.value)
-            if search_str in comp_val.lower():
-                comp_name = comp_val
-
-        if comp_name not in results:
-            results[comp_name] = 0
-        results[comp_name] += 1
 
     conn.unbind()
     return results
@@ -161,11 +117,6 @@ def get_ad_users_by_dept_sync(dept_name: str) -> list:
 
 async def search_ad_departments(search_str: str) -> dict:
     return await asyncio.to_thread(search_ad_departments_sync, search_str)
-
-
-async def search_ad_company(search_str: str) -> dict:
-    return await asyncio.to_thread(search_ad_company_sync, search_str)
-
 
 async def get_ad_users_by_dept(dept_name: str) -> list:
     return await asyncio.to_thread(get_ad_users_by_dept_sync, dept_name)
@@ -299,7 +250,6 @@ def get_main_menu_markup() -> BubbleMarkup:
     markup = BubbleMarkup()
     markup.add_button(command="/add_all", label="Добавить всех активных")
     markup.add_button(command="/add_by_dept", label="Добавить по подразделению")
-    markup.add_button(command="/add_by_company", label="Добавить по компании")
     markup.add_button(command="/add_by_list", label="Добавить по списку")
     markup.add_button(command="/get_users_list", label="Получить список пользователей")
     return markup
@@ -308,39 +258,26 @@ def get_main_menu_markup() -> BubbleMarkup:
 @collector.command("/start", description="Запуск бота")
 async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
+    # Теперь при старте мы сразу ждем выбора действия (выводим кнопки)
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
 
     await bot.answer_message(
-        body="Привет! Я бот для массового добавления пользователей.\n\n"
-             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
-             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
+        body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
+        bubbles=get_main_menu_markup()
     )
 
 
 @collector.command("/add_by_dept", visible=False)
 async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    user_data = USER_STATES.get(user_huid, {})
-
-    if user_data.get("state") != "WAIT_FOR_ACTION":
-        await bot.answer_message("Сначала выберите канал с помощью команды /start.")
-        return
-
-    USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
-    await bot.answer_message(body="Введите часть названия подразделения (например, `сопровожд`):")
-
-
-@collector.command("/add_by_company", visible=False)
-async def add_by_company_handler(message: IncomingMessage, bot: Bot) -> None:
-    user_huid = str(message.sender.huid)
-    user_data = USER_STATES.get(user_huid, {})
-
-    if user_data.get("state") != "WAIT_FOR_ACTION":
-        await bot.answer_message("Сначала выберите канал с помощью команды /start.")
-        return
-
-    USER_STATES[user_huid]["state"] = "WAIT_FOR_COMPANY"
-    await bot.answer_message(body="Введите часть названия компании (например, `Ак Барс`):")
+    
+    # При нажатии кнопки мы очищаем FSM от старых данных и начинаем ветку поиска
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
+    
+    await bot.answer_message(
+        body="Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
+    )
 
 
 @collector.default_message_handler
@@ -351,12 +288,11 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     msg_text = message.body.strip()
 
     # ─── ОБРАБОТКА КНОПОК ЗАГЛУШЕК ───
-    # (Мы убрали /add_by_company из этого списка)
     if msg_text in ("/add_all", "/add_by_list", "/get_users_list"):
         await bot.answer_message(body="Этот функционал находится в разработке.", bubbles=get_main_menu_markup())
         return
 
-    # ─── ШАГ 1: ПОЛУЧЕНИЕ КАНАЛА ───
+    # ─── ШАГ 1: ПОЛУЧЕНИЕ И ПРОВЕРКА КАНАЛА ───
     if current_state == "WAIT_FOR_CHANNEL":
         chat_id = None
         raw_cmd = getattr(message, "raw_command", {})
@@ -386,20 +322,19 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         chat_name = chat_info.get("name", "Неизвестный канал")
 
         if status == "ADMIN":
+            # Сохраняем канал и сразу переходим к запросу подразделения
             USER_STATES[user_huid]["target_chat_id"] = str(chat_id)
             USER_STATES[user_huid]["target_chat_name"] = chat_name
             USER_STATES[user_huid]["chat_members"] = chat_info.get("member_huids", set())
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
 
             await bot.answer_message(
-                body="Выберите действие:",
-                bubbles=get_main_menu_markup()
+                body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nВведите часть названия подразделения (например, `сопровожд`):"
             )
         elif status == "MEMBER":
             await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
         else:
-            await bot.answer_message(
-                f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
+            await bot.answer_message(f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
         return
 
     # ─── ШАГ 2: ВВОД СЛОВА ДЛЯ ПОИСКА ПО ПОДРАЗДЕЛЕНИЮ ───
@@ -434,35 +369,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
         return
 
-    # ─── ШАГ 2.1: ВВОД СЛОВА ДЛЯ ПОИСКА ПО КОМПАНИИ ───
-    elif current_state == "WAIT_FOR_COMPANY":
-        if len(msg_text) < 3:
-            await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
-            return
-
-        try:
-            ad_results = await search_ad_company(msg_text)
-            if not ad_results:
-                await bot.answer_message(f"По запросу «{msg_text}» компаний не найдено.")
-                return
-
-            # Выводим текстовый список статистики
-            text_lines = ["**Найдено компаний:**"]
-            for comp, count in ad_results.items():
-                text_lines.append(f"• {comp} — {count} чел.")
-            await bot.answer_message(body="\n".join(text_lines))
-
-            # Сбрасываем статус обратно в меню, так как кнопки добавления мы пока не делаем
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(
-                body="*(Кнопки добавления по компании будут реализованы на следующем этапе)*\n\nВыберите действие:",
-                bubbles=get_main_menu_markup()
-            )
-
-        except Exception as e:
-            await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
-        return
-
     # ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА (ПРОВЕРКА НА ДУРАКА) ───
     elif current_state == "WAIT_FOR_DEPT_SELECTION":
         if msg_text == "/cancel_dept":
@@ -489,7 +395,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         )
         return
 
-    # ─── ШАГ 4: ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ (ТОЛЬКО ДЛЯ ОТДЕЛОВ) ───
+    # ─── ШАГ 4: ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ ───
     elif current_state == "WAIT_FOR_CONFIRMATION":
         if msg_text == "/cancel_add":
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
@@ -568,4 +474,9 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         return
 
     # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
-    await bot.answer_message(body="Введите `/start`, чтобы начать работу с ботом.")
+    # Задаем дефолтное состояние и выводим меню
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
+    await bot.answer_message(
+        body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
+        bubbles=get_main_menu_markup()
+    )
