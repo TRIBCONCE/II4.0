@@ -14,16 +14,17 @@ from src.config import settings
 # ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
 collector = HandlerCollector()
 
-# FSM: { "user_huid": {"state": "ШАГ", "target_chat_id": "...", "target_chat_name": "...", "chat_members": set(), "selected_dept": "..."} }
+# Наша собственная безотказная FSM!
+# Формат: { "user_huid": {"state": "ШАГ", "chat_id": "...", "chat_name": "..."} }
 USER_STATES = {}
-
 
 # ─── 1. ЛОГИКА ACTIVE DIRECTORY (LDAP) ────────────────────────────────────
 
 # TODO: Вставь сюда данные сервисной учетки
 LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "твой_пароль"
+LDAP_PASSWORD = "скрыт"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
+
 
 def _get_ad_connection():
     tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
@@ -49,7 +50,8 @@ def search_ad_departments_sync(search_str: str) -> dict:
         f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
     )
 
-    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 'distinguishedName']
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3',
+                  'extensionAttribute4', 'distinguishedName']
     conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
     results = {}
 
@@ -117,6 +119,7 @@ def get_ad_users_by_dept_sync(dept_name: str) -> list:
 
 async def search_ad_departments(search_str: str) -> dict:
     return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
 
 async def get_ad_users_by_dept(dept_name: str) -> list:
     return await asyncio.to_thread(get_ad_users_by_dept_sync, dept_name)
@@ -270,10 +273,10 @@ async def start_handler(message: IncomingMessage, bot: Bot) -> None:
 @collector.command("/add_by_dept", visible=False)
 async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    
+
     # При нажатии кнопки мы очищаем FSM от старых данных и начинаем ветку поиска
     USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
-    
+
     await bot.answer_message(
         body="Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
              "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
@@ -334,7 +337,8 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         elif status == "MEMBER":
             await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
         else:
-            await bot.answer_message(f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
+            await bot.answer_message(
+                f"❌ Меня нет в канале **{chat_name}**. Добавьте меня и выдайте права администратора.")
         return
 
     # ─── ШАГ 2: ВВОД СЛОВА ДЛЯ ПОИСКА ПО ПОДРАЗДЕЛЕНИЮ ───
@@ -479,4 +483,5 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     await bot.answer_message(
         body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
         bubbles=get_main_menu_markup()
-    )
+    ) и так вот мы урезали функционал, теперь я хочу полностью сделать добавление всех пользователей, все пользователи берутся из выгрузги по экспресс, добавление должно быть строго реализованно так же как и сейчас максимум по 500 человек, так же 
+очень важно сделать вот что, иногда бывает что пользователя уже нет в системе и тогда выкидывает ошибку и добавление не работает, это надо обходить чтобы алгоритм добавления не прирывался. И не забудь так же перед добавлением сделать тоже подтверждение добавлять или нет, сообщение точно ли готовы добавить всех пользователей и кнопки да нет
