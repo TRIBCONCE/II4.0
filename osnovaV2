@@ -24,7 +24,7 @@ USER_STATES = {}
 
 # TODO: Вставь сюда данные сервисной учетки
 LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = ""
+"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
 def _get_ad_connection():
@@ -370,7 +370,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     msg_text = message.body.strip()
 
     # ─── ОБРАБОТКА КНОПОК ЗАГЛУШЕК ───
-    if msg_text in ("/get_users_list"):
+    if msg_text == "/get_users_list":
         await bot.answer_message(body="Этот функционал находится в разработке.", bubbles=get_main_menu_markup())
         return
 
@@ -649,25 +649,41 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             )
             return
 
-        if not hasattr(message, 'file') or not message.file:
+        # Ищем прикрепленный файл (в pybotx он может лежать в message.file или message.document)
+        attached_file = getattr(message, 'file', None) or getattr(message, 'document', None)
+        if not attached_file:
             await bot.answer_message("Пожалуйста, прикрепите CSV-файл к сообщению.")
             return
 
         await bot.answer_message("⏳ Читаю файл и сверяю HUID с базой eXpress...")
 
         try:
-            # Скачиваем файл встроенным методом PyBotX
-            file_bytes = await bot.download_file(message.file.sync_id)
-            
-            # Декодируем, utf-8-sig автоматически уберет BOM, если файл из Excel
-            text = file_bytes.decode('utf-8-sig')
-            reader = csv.DictReader(io.StringIO(text), delimiter=',')
-
-            if not reader.fieldnames or "huid" not in [h.lower() for h in reader.fieldnames]:
-                await bot.answer_message("❌ В файле не найдена обязательная колонка `huid` или неверный разделитель (нужна запятая).")
+            # Безопасно получаем ID файла (разные версии pybotx используют .id или .sync_id)
+            file_id = getattr(attached_file, 'id', None) or getattr(attached_file, 'sync_id', None)
+            if not file_id:
+                await bot.answer_message("❌ Не удалось извлечь идентификатор прикрепленного файла.")
                 return
 
-            huid_col = next(h for h in reader.fieldnames if h.lower() == "huid")
+            file_bytes = await bot.download_file(file_id)
+            
+            # Декодируем (utf-8-sig автоматически удаляет маркер BOM от Windows/Excel)
+            text = file_bytes.decode('utf-8-sig')
+            
+            # Автоматически определяем разделитель (запятая или точка с запятой)
+            delimiter = ';' if ';' in text.split('\n')[0] else ','
+            reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+
+            # Ищем колонку huid независимо от пробелов и регистра
+            huid_col = None
+            if reader.fieldnames:
+                for col in reader.fieldnames:
+                    if col and col.strip().lower() == "huid":
+                        huid_col = col
+                        break
+
+            if not huid_col:
+                await bot.answer_message("❌ В файле не найдена обязательная колонка `huid` (или файл пуст).")
+                return
             
             uploaded_huids = set()
             for row in reader:
@@ -676,7 +692,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
                     uploaded_huids.add(h.strip())
 
             if not uploaded_huids:
-                await bot.answer_message("❌ Файл пуст или колонка `huid` не содержит данных.")
+                await bot.answer_message("❌ Колонка `huid` не содержит данных.")
                 return
 
             # Получаем быстрый словарь всех HUID из eXpress
@@ -711,7 +727,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         except UnicodeDecodeError:
             await bot.answer_message("❌ Ошибка кодировки. Пожалуйста, сохраните CSV-файл строго в формате **UTF-8** (а не ANSI).")
         except Exception as e:
-            await bot.answer_message(f"❌ **Ошибка при обработке файла:**\n`{e}`")
+            await bot.answer_message(body=f"❌ **Ошибка при обработке файла:**\n`{e}`")
 
         return
 
