@@ -8,45 +8,33 @@
             )
             return
 
-        # Пытаемся найти прикрепленный файл
+        # Ищем прикрепленный файл
         attached_file = getattr(message, 'file', None) or getattr(message, 'document', None)
-        raw_msg_dump = str(getattr(message, "raw_command", "No raw_command"))
-
         if not attached_file:
-            # Если объект файла вообще не найден, выводим сырые данные сообщения
-            msg_dir = str(dir(message))
-            await bot.answer_message(
-                body=f"❌ Файл не найден в стандартных свойствах сообщения.\n\n"
-                     f"🕵️‍♂️ **Атрибуты message:**\n`{msg_dir}`\n\n"
-                     f"📦 **Сырой JSON (первые 2000 символов):**\n`{raw_msg_dump[:2000]}`"
-            )
+            await bot.answer_message("Пожалуйста, прикрепите CSV-файл к сообщению.")
             return
 
-        await bot.answer_message("⏳ Читаю файл и анализирую структуру...")
+        await bot.answer_message("⏳ Читаю файл и сверяю HUID с базой eXpress...")
 
         try:
-            # Пытаемся достать ID
-            file_id = getattr(attached_file, 'id', None) or getattr(attached_file, 'sync_id', None)
+            # Магия здесь! Файл уже загружен в память мессенджером и лежит в атрибуте content
+            file_bytes = attached_file.content
             
-            if not file_id:
-                # Если файла ID нет, вываливаем ВЕСЬ объект файла в чат
-                file_dir = str(dir(attached_file))
-                file_vars = str(vars(attached_file)) if hasattr(attached_file, '__dict__') else "Словарь __dict__ отсутствует"
-                
-                await bot.answer_message(
-                    body=f"❌ Не удалось извлечь идентификатор прикрепленного файла.\n\n"
-                         f"🕵️‍♂️ **Атрибуты объекта файла:**\n`{file_dir}`\n\n"
-                         f"📦 **Значения атрибутов:**\n`{file_vars}`\n\n"
-                         f"🗄 **Сырой JSON сообщения:**\n`{raw_msg_dump[:2000]}`"
-                )
+            if not file_bytes:
+                await bot.answer_message("❌ Файл пуст или не удалось прочитать его содержимое.")
                 return
 
-            # Если вдруг ID нашелся (что странно), пробуем скачать
-            file_bytes = await bot.download_file(file_id)
-            text = file_bytes.decode('utf-8-sig')
+            # Умная раскодировка: пробуем UTF-8, если это русский Excel - откатываемся на cp1251
+            try:
+                text = file_bytes.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                text = file_bytes.decode('cp1251')
+
+            # Автоматически определяем разделитель (запятая или точка с запятой)
             delimiter = ';' if ';' in text.split('\n')[0] else ','
             reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
 
+            # Ищем колонку huid независимо от пробелов и регистра
             huid_col = None
             if reader.fieldnames:
                 for col in reader.fieldnames:
@@ -68,7 +56,9 @@
                 await bot.answer_message("❌ Колонка `huid` не содержит данных.")
                 return
 
+            # Получаем быстрый словарь всех HUID из eXpress
             express_huids = await get_express_huids_dict()
+
             active_huids = []
             inactive_count = 0
 
