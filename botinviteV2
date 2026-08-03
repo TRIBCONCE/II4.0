@@ -22,7 +22,7 @@ USER_STATES = {}
 
 # TODO: Вставь сюда данные сервисной учетки
 LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "скрыт"
+LDAP_PASSWORD = "_777TodayBlackEgBor777_"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
 
@@ -222,7 +222,7 @@ async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
     error_details = []
     chunk_size = 500
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         add_url = f"{cts_url}/api/v3/botx/chats/add_user"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -238,11 +238,36 @@ async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
                 if resp.status_code in (200, 201, 204):
                     success_count += len(chunk)
                 else:
-                    error_count += len(chunk)
-                    error_details.append(f"HTTP {resp.status_code}: {resp.text}")
+                    for h in chunk:
+                        try:
+                            fallback_resp = await client.post(add_url, headers=headers, json={
+                                "group_chat_id": chat_id,
+                                "user_huids": [h]
+                            })
+                            if fallback_resp.status_code in (200, 201, 204):
+                                success_count += 1
+                            else:
+                                error_count += 1
+                        except Exception:
+                            error_count += 1
+
+                    error_details.append(f"HTTP {resp.status_code} для пачки. Запущен Fallback.")
+
             except Exception as e:
-                error_count += len(chunk)
-                error_details.append(f"Ошибка сети: {str(e)}")
+                # Если сломалась сеть на большой пачке - тоже пытаемся поштучно
+                for h in chunk:
+                    try:
+                        fallback_resp = await client.post(add_url, headers=headers, json={
+                            "group_chat_id": chat_id,
+                            "user_huids": [h]
+                        })
+                        if fallback_resp.status_code in (200, 201, 204):
+                            success_count += 1
+                        else:
+                            error_count += 1
+                    except Exception:
+                        error_count += 1
+                error_details.append(f"Ошибка сети: {str(e)}. Запущен Fallback.")
 
     return success_count, error_count, error_details
 
@@ -261,7 +286,6 @@ def get_main_menu_markup() -> BubbleMarkup:
 @collector.command("/start", description="Запуск бота")
 async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    # Теперь при старте мы сразу ждем выбора действия (выводим кнопки)
     USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
 
     await bot.answer_message(
@@ -270,15 +294,24 @@ async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     )
 
 
+@collector.command("/add_all", visible=False)
+async def add_all_handler(message: IncomingMessage, bot: Bot) -> None:
+    user_huid = str(message.sender.huid)
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "ALL"}
+    await bot.answer_message(
+        body="Выбрано: **Добавить всех активных**\n\n"
+             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
+    )
+
+
 @collector.command("/add_by_dept", visible=False)
 async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-
-    # При нажатии кнопки мы очищаем FSM от старых данных и начинаем ветку поиска
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL"}
-
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "DEPT"}
     await bot.answer_message(
-        body="Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+        body="Выбрано: **Добавить по подразделению**\n\n"
+             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
              "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
     )
 
@@ -291,7 +324,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     msg_text = message.body.strip()
 
     # ─── ОБРАБОТКА КНОПОК ЗАГЛУШЕК ───
-    if msg_text in ("/add_all", "/add_by_list", "/get_users_list"):
+    if msg_text in ("/add_by_list", "/get_users_list"):
         await bot.answer_message(body="Этот функционал находится в разработке.", bubbles=get_main_menu_markup())
         return
 
@@ -325,15 +358,24 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         chat_name = chat_info.get("name", "Неизвестный канал")
 
         if status == "ADMIN":
-            # Сохраняем канал и сразу переходим к запросу подразделения
             USER_STATES[user_huid]["target_chat_id"] = str(chat_id)
             USER_STATES[user_huid]["target_chat_name"] = chat_name
             USER_STATES[user_huid]["chat_members"] = chat_info.get("member_huids", set())
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
 
-            await bot.answer_message(
-                body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nВведите часть названия подразделения (например, `сопровожд`):"
-            )
+            if user_data.get("flow") == "ALL":
+                USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_ALL"
+                markup = BubbleMarkup()
+                markup.add_button(command="/confirm_add_all", label="Да, добавить")
+                markup.add_button(command="/cancel_add", label="Нет, отмена")
+                await bot.answer_message(
+                    body=f"Вы точно готовы добавить **ВСЕХ** активных пользователей в канал **{chat_name}**?",
+                    bubbles=markup
+                )
+            else:
+                USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
+                await bot.answer_message(
+                    body=f"✅ Отлично! Я администратор в канале **{chat_name}**.\n\nВведите часть названия подразделения (например, `сопровожд`):"
+                )
         elif status == "MEMBER":
             await bot.answer_message(f"⚠️ Я есть в канале **{chat_name}**, но у меня НЕТ прав администратора.")
         else:
@@ -373,7 +415,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
         return
 
-    # ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА (ПРОВЕРКА НА ДУРАКА) ───
+    # ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА ───
     elif current_state == "WAIT_FOR_DEPT_SELECTION":
         if msg_text == "/cancel_dept":
             USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
@@ -387,10 +429,10 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         dept_name = msg_text.replace("/select_dept ", "").strip()
 
         USER_STATES[user_huid]["selected_dept"] = dept_name
-        USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION"
+        USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_DEPT"
 
         markup = BubbleMarkup()
-        markup.add_button(command="/confirm_add", label="Да, добавить")
+        markup.add_button(command="/confirm_add_dept", label="Да, добавить")
         markup.add_button(command="/cancel_add", label="Нет, отмена")
 
         await bot.answer_message(
@@ -399,8 +441,8 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
         )
         return
 
-    # ─── ШАГ 4: ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ ───
-    elif current_state == "WAIT_FOR_CONFIRMATION":
+    # ─── ШАГ 4 (А): ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ (ПОДРАЗДЕЛЕНИЯ) ───
+    elif current_state == "WAIT_FOR_CONFIRMATION_DEPT":
         if msg_text == "/cancel_add":
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
             await bot.answer_message(
@@ -409,7 +451,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             )
             return
 
-        if msg_text != "/confirm_add":
+        if msg_text != "/confirm_add_dept":
             await bot.answer_message("Пожалуйста, нажмите «Да, добавить» или «Нет, отмена».")
             return
 
@@ -477,11 +519,101 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
         return
 
+    # ─── ШАГ 4 (Б): ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ (ВСЕХ АКТИВНЫХ) ───
+    elif current_state == "WAIT_FOR_CONFIRMATION_ALL":
+        if msg_text == "/cancel_add":
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            await bot.answer_message(
+                body="❌ Операция отменена.\n\nВыберите следующее действие:",
+                bubbles=get_main_menu_markup()
+            )
+            return
+
+        if msg_text != "/confirm_add_all":
+            await bot.answer_message("Пожалуйста, нажмите «Да, добавить» или «Нет, отмена».")
+            return
+
+        chat_id = user_data.get("target_chat_id")
+        chat_name = user_data.get("target_chat_name")
+        current_members = user_data.get("chat_members", set())
+
+        await bot.answer_message(
+            f"⏳ Получаю список ВСЕХ активных пользователей eXpress и начинаю массовое добавление в **{chat_name}**...\n*(Это может занять некоторое время)*")
+
+        try:
+            express_db = await get_express_users_dict()
+
+            huids_to_add = []
+            already_in_chat_count = 0
+
+            # Перебираем всех пользователей из CSV, которые помечены как 'active'
+            for email, data in express_db.items():
+                if data["active"]:
+                    huid = data["huid"]
+                    if huid in current_members:
+                        already_in_chat_count += 1
+                    else:
+                        huids_to_add.append(huid)
+
+            success_add = 0
+            error_add = 0
+            error_details = []
+
+            if huids_to_add:
+                success_add, error_add, error_details = await add_members_to_chat_batch(chat_id, huids_to_add)
+
+            report = (
+                f"Готово. Результат массового добавления в **{chat_name}**:\n\n"
+                f"✅ Успешно добавлено: {success_add}\n"
+                f"⚠️ Уже были в канале: {already_in_chat_count}\n"
+                f"❌ Ошибки при добавлении: {error_add}\n"
+            )
+
+            if error_details:
+                err_str = "\n".join(f"• {e}" for e in set(error_details))
+                if len(err_str) > 1000:
+                    err_str = err_str[:1000] + "...\n(текст обрезан)"
+                report += f"\n**Детали ошибок API (работал Fallback):**\n`{err_str}`\n"
+
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+
+            await bot.answer_message(body=report)
+            await bot.answer_message(body="Выберите следующее действие:", bubbles=get_main_menu_markup())
+
+        except Exception as e:
+            await bot.answer_message(body=f"❌ **Произошла системная ошибка при добавлении:**\n`{e}`")
+
+        return
+
     # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
-    # Задаем дефолтное состояние и выводим меню
     USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
     await bot.answer_message(
         body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
         bubbles=get_main_menu_markup()
-    ) и так вот мы урезали функционал, теперь я хочу полностью сделать добавление всех пользователей, все пользователи берутся из выгрузги по экспресс, добавление должно быть строго реализованно так же как и сейчас максимум по 500 человек, так же 
-очень важно сделать вот что, иногда бывает что пользователя уже нет в системе и тогда выкидывает ошибку и добавление не работает, это надо обходить чтобы алгоритм добавления не прирывался. И не забудь так же перед добавлением сделать тоже подтверждение добавлять или нет, сообщение точно ли готовы добавить всех пользователей и кнопки да нет
+    ) 
+Вот теперь надо сделать вот эту часть из тз:
+Загрузка файла
+Бот принимает файл в том же формате CSV. Требования к файлу:
+•	Кодировка: UTF-8
+•	Разделитель: запятая ,
+•	Первая строка — заголовок (обязательно)
+•	Обязательное поле: huid
+•	Остальные поля игнорируются при импорте, но полезны пользователю для ориентации
+
+Бот должен явно написать пользователю:
+«Загрузите CSV-файл в кодировке UTF-8. Обязательная колонка — huid. Остальные колонки можно оставить или удалить. Неактивные пользователи из списка будут пропущены автоматически.»
+
+Обработка после загрузки
+11.	Бот валидирует файл (корректность CSV, наличие колонки huid, непустые значения).
+12.	По каждому HUID проверяет статус активности через API.
+13.	Выводит сводку перед добавлением:
+
+Загружено записей: 45
+Активных пользователей: 38
+Неактивных (будут пропущены): 7
+
+Добавить 38 пользователей в [название канала]?
+[Да] [Отмена]
+
+14.	Добавление, итоговый отчёт.
+Кнопка у нас есть, метод добавления по 500 с проверкой и батчингом у нас есть, нужно только прописать сценариц и сделать методы работы с csv файлами.
