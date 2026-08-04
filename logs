@@ -1,4 +1,2 @@
- Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...
-15:53
-Bot invite v2
- Ошибка генерации файла: name 'base64' is not defined
+Ошибка генерации файла: Client error '404 Not Found' for url 'https://24.akbars.ru/api/v4/botx/messages'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
