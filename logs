@@ -1,2 +1,1 @@
-Ошибка генерации файла: Client error '404 Not Found' for url 'https://24.akbars.ru/api/v4/botx/messages'
-For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+Ошибка генерации файла: Не удалось найти эндпоинт отправки. Ошибки: ['https://24.akbars.ru/api/v3/botx/events -> 404', 'https://24.akbars.ru/api/v2/botx/events -> 404', 'https://24.akbars.ru/api/v4/botx/events -> 404']
