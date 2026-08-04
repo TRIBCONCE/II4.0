@@ -1,161 +1,54 @@
-        # ─── ШАГ 4 (В): ЗАГРУЗКА И ВАЛИДАЦИЯ ФАЙЛА (ПО СПИСКУ) ───
-    elif current_state == "WAIT_FOR_FILE_LIST":
-        if msg_text in ("/cancel_add", "/cancel_dept"):
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(
-                body="❌ Операция отменена.\n\nВыберите следующее действие:",
-                bubbles=get_main_menu_markup()
-            )
-            return
+async def send_raw_message_with_file(chat_id: str, body: str, file_name: str, file_bytes: bytes):
+    """Надежная функция для отправки файла от лица бота через прямой API eXpress"""
+    import uuid  # Импортируем генератор ID
+    
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
 
-        # Ищем прикрепленный файл
-        attached_file = getattr(message, 'file', None) or getattr(message, 'document', None)
-        if not attached_file:
-            await bot.answer_message("Пожалуйста, прикрепите CSV-файл к сообщению.")
-            return
+    b64_content = base64.b64encode(file_bytes).decode('utf-8')
+    data_uri = f"data:text/csv;base64,{b64_content}"
 
-        await bot.answer_message("⏳ Читаю файл и сверяю HUID с базой eXpress...")
-
-        try:
-            # Магия здесь! Файл уже загружен в память мессенджером и лежит в атрибуте content
-            file_bytes = attached_file.content
-
-            if not file_bytes:
-                await bot.answer_message("❌ Файл пуст или не удалось прочитать его содержимое.")
-                return
-
-            # Умная раскодировка: пробуем UTF-8, если это русский Excel - откатываемся на cp1251
-            try:
-                text = file_bytes.decode('utf-8-sig')
-            except UnicodeDecodeError:
-                text = file_bytes.decode('cp1251')
-
-            # Автоматически определяем разделитель (запятая или точка с запятой)
-            delimiter = ';' if ';' in text.split('\n')[0] else ','
-            reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-
-            # Ищем колонку huid независимо от пробелов и регистра
-            huid_col = None
-            if reader.fieldnames:
-                for col in reader.fieldnames:
-                    if col and col.strip().lower() == "huid":
-                        huid_col = col
-                        break
-
-            if not huid_col:
-                await bot.answer_message("❌ В файле не найдена обязательная колонка `huid` (или файл пуст).")
-                return
-
-            uploaded_huids = set()
-            for row in reader:
-                h = row.get(huid_col)
-                if h:
-                    uploaded_huids.add(h.strip())
-
-            if not uploaded_huids:
-                await bot.answer_message("❌ Колонка `huid` не содержит данных.")
-                return
-
-            # Получаем быстрый словарь всех HUID из eXpress
-            express_huids = await get_express_huids_dict()
-
-            active_huids = []
-            inactive_count = 0
-
-            for h in uploaded_huids:
-                if h in express_huids and express_huids[h]:
-                    active_huids.append(h)
-                else:
-                    inactive_count += 1
-
-            chat_name = user_data.get("target_chat_name")
-            USER_STATES[user_huid]["list_huids_to_add"] = active_huids
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_LIST"
-
-            markup = BubbleMarkup()
-            markup.add_button(command="/confirm_add_list", label="Да")
-            markup.add_button(command="/cancel_add", label="Отмена")
-
-            report = (
-                f"Загружено записей: {len(uploaded_huids)}\n"
-                f"Активных пользователей: {len(active_huids)}\n"
-                f"Неактивных (будут пропущены): {inactive_count}\n\n"
-                f"Добавить {len(active_huids)} пользователей в **{chat_name}**?"
-            )
-
-            await bot.answer_message(body=report, bubbles=markup)
-
-        except Exception as e:
-            await bot.answer_message(body=f"❌ **Ошибка при обработке файла:**\n`{e}`")
-
-        return
-
-    # ─── ШАГ 4 (Г): ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ (ПО СПИСКУ) ───
-    elif current_state == "WAIT_FOR_CONFIRMATION_LIST":
-        if msg_text == "/cancel_add":
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(
-                body="❌ Операция отменена.\n\nВыберите следующее действие:",
-                bubbles=get_main_menu_markup()
-            )
-            return
-
-        if msg_text != "/confirm_add_list":
-            await bot.answer_message("Пожалуйста, нажмите «Да» или «Отмена».")
-            return
-
-        chat_id = user_data.get("target_chat_id")
-        chat_name = user_data.get("target_chat_name")
-        current_members = user_data.get("chat_members", set())
-        active_huids_from_file = user_data.get("list_huids_to_add", [])
-
-        await bot.answer_message(f"⏳ Начинаю добавление пользователей из списка в канал **{chat_name}**...")
-
-        try:
-            huids_to_add = []
-            already_in_chat_count = 0
-
-            for huid in active_huids_from_file:
-                if huid in current_members:
-                    already_in_chat_count += 1
-                else:
-                    huids_to_add.append(huid)
-
-            success_add = 0
-            error_add = 0
-            error_details = []
-
-            if huids_to_add:
-                success_add, error_add, error_details = await add_members_to_chat_batch(chat_id, huids_to_add)
-
-            report = (
-                f"Готово. Результат добавления по списку в **{chat_name}**:\n\n"
-                f"✅ Успешно добавлено: {success_add}\n"
-                f"⚠️ Уже были в канале: {already_in_chat_count}\n"
-                f"❌ Ошибки при добавлении: {error_add}\n"
-            )
-
-            if error_details:
-                err_str = "\n".join(f"• {e}" for e in set(error_details))
-                if len(err_str) > 1000:
-                    err_str = err_str[:1000] + "...\n(текст обрезан)"
-                report += f"\n**Детали ошибок API (работал Fallback):**\n`{err_str}`\n"
-
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-
-            await bot.answer_message(body=report)
-            await bot.answer_message(body="Выберите следующее действие:", bubbles=get_main_menu_markup())
-
-        except Exception as e:
-            await bot.answer_message(body=f"❌ **Произошла системная ошибка при добавлении:**\n`{e}`")
-
-        return
-
-    # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
-    await bot.answer_message(
-        body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
-        bubbles=get_main_menu_markup()
-    )
-Пользовательский сценарий поменялся смотри сначала как пользователь нажал на кнопку по списку, пользователю бот пресылает csv файл со всеми пользователями express и сообщение "Оставьте только нужных пользователей для добавления, а так же не удаляйте заголовки"
-Потом весь сценарий пользования остаётся тот же пользователь закидывает изменённый файл csv и всё идёт в том же порядке
+    # Правильная структура payload для отправки сообщений от бота (Event API)
+    payload = {
+        "bot_id": bot_id_str,
+        "events": [
+            {
+                "sync_id": str(uuid.uuid4()),
+                "type": "command",
+                "group_chat_id": chat_id,
+                "command": {
+                    "body": body,
+                    "command_type": "user"
+                },
+                "attachments": [
+                    {
+                        "type": "document",
+                        "data": {
+                            "file_name": file_name,
+                            "content": data_uri
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        
+        # Перебираем правильные адреса для бот-ивентов
+        urls_to_try = [
+            f"{cts_url}/api/v3/botx/events",
+            f"{cts_url}/api/v2/botx/events",
+            f"{cts_url}/api/v4/botx/events"
+        ]
+        
+        last_response = None
+        for url in urls_to_try:
+            resp = await client.post(url, headers=headers, json=payload)
+            last_response = resp
+            if resp.status_code != 404:
+                break  # Если не 404, значит мы нашли правильный эндпоинт!
+                
+        last_response.raise_for_status()
