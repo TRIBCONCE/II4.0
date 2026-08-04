@@ -38,18 +38,18 @@ async def send_raw_message_with_file(chat_id: str, body: str, file_name: str, fi
     async with httpx.AsyncClient(timeout=30.0) as client:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         
-        # Перебираем правильные адреса для бот-ивентов
+        # 🌟 ИСПРАВЛЕНО: Добавлен блок /bots/{bot_id_str}/ в URL!
         urls_to_try = [
-            f"{cts_url}/api/v3/botx/events",
-            f"{cts_url}/api/v2/botx/events",
-            f"{cts_url}/api/v4/botx/events"
+            f"{cts_url}/api/v3/botx/bots/{bot_id_str}/events",
+            f"{cts_url}/api/v2/botx/bots/{bot_id_str}/events",
+            f"{cts_url}/api/v4/botx/bots/{bot_id_str}/events"
         ]
         
         errors = []
         for url in urls_to_try:
             try:
                 resp = await client.post(url, headers=headers, json=payload)
-                # Если ответ не 404 (Page Not Found) и не 405 (Method Not Allowed), значит мы попали куда надо
+                # Если ответ не 404 (Не найдено), значит мы попали в правильную версию API
                 if resp.status_code not in (404, 405):
                     resp.raise_for_status()
                     return # Успешно отправили!
