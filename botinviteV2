@@ -1,91 +1,58 @@
-# ─── ШАГ 4 (В): ЗАГРУЗКА И ВАЛИДАЦИЯ ФАЙЛА (ПО СПИСКУ) ───
-    elif current_state == "WAIT_FOR_FILE_LIST":
-        if msg_text in ("/cancel_add", "/cancel_dept"):
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(
-                body="❌ Операция отменена.\n\nВыберите следующее действие:",
-                bubbles=get_main_menu_markup()
-            )
+    # ─── ШАГ 2: ВВОД СЛОВА ДЛЯ ПОИСКА ПО ПОДРАЗДЕЛЕНИЮ ───
+    elif current_state == "WAIT_FOR_DEPT":
+        if len(msg_text) < 3:
+            await bot.answer_message("Пожалуйста, введите минимум 3 символа для поиска.")
             return
-
-        # Ищем прикрепленный файл
-        attached_file = getattr(message, 'file', None) or getattr(message, 'document', None)
-        if not attached_file:
-            await bot.answer_message("Пожалуйста, прикрепите CSV-файл к сообщению.")
-            return
-
-        await bot.answer_message("⏳ Читаю файл и сверяю HUID с базой eXpress...")
 
         try:
-            # Магия здесь! Файл уже загружен в память мессенджером и лежит в атрибуте content
-            file_bytes = attached_file.content
-            
-            if not file_bytes:
-                await bot.answer_message("❌ Файл пуст или не удалось прочитать его содержимое.")
+            ad_results = await search_ad_departments(msg_text)
+            if not ad_results:
+                await bot.answer_message(f"По запросу «{msg_text}» целевых подразделений не найдено.")
                 return
 
-            # Умная раскодировка: пробуем UTF-8, если это русский Excel - откатываемся на cp1251
-            try:
-                text = file_bytes.decode('utf-8-sig')
-            except UnicodeDecodeError:
-                text = file_bytes.decode('cp1251')
-
-            # Автоматически определяем разделитель (запятая или точка с запятой)
-            delimiter = ';' if ';' in text.split('\n')[0] else ','
-            reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-
-            # Ищем колонку huid независимо от пробелов и регистра
-            huid_col = None
-            if reader.fieldnames:
-                for col in reader.fieldnames:
-                    if col and col.strip().lower() == "huid":
-                        huid_col = col
-                        break
-
-            if not huid_col:
-                await bot.answer_message("❌ В файле не найдена обязательная колонка `huid` (или файл пуст).")
-                return
-            
-            uploaded_huids = set()
-            for row in reader:
-                h = row.get(huid_col)
-                if h:
-                    uploaded_huids.add(h.strip())
-
-            if not uploaded_huids:
-                await bot.answer_message("❌ Колонка `huid` не содержит данных.")
-                return
-
-            # Получаем быстрый словарь всех HUID из eXpress
-            express_huids = await get_express_huids_dict()
-
-            active_huids = []
-            inactive_count = 0
-
-            for h in uploaded_huids:
-                if h in express_huids and express_huids[h]:
-                    active_huids.append(h)
-                else:
-                    inactive_count += 1
-
-            chat_name = user_data.get("target_chat_name")
-            USER_STATES[user_huid]["list_huids_to_add"] = active_huids
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_LIST"
+            text_lines = ["**Найдено:**"]
+            for dept, count in ad_results.items():
+                text_lines.append(f"• {dept} — {count} чел.")
+            await bot.answer_message(body="\n".join(text_lines))
 
             markup = BubbleMarkup()
-            markup.add_button(command="/confirm_add_list", label="Да")
-            markup.add_button(command="/cancel_add", label="Отмена")
+            for dept, count in ad_results.items():
+                markup.add_button(command=f"/select_dept {dept}", label=f"{dept}")
 
-            report = (
-                f"Загружено записей: {len(uploaded_huids)}\n"
-                f"Активных пользователей: {len(active_huids)}\n"
-                f"Неактивных (будут пропущены): {inactive_count}\n\n"
-                f"Добавить {len(active_huids)} пользователей в **{chat_name}**?"
+            markup.add_button(command="/cancel_dept", label="Отмена")
+
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT_SELECTION"
+            await bot.answer_message(
+                body="Выберите нужное подразделение из списка:",
+                bubbles=markup
             )
-
-            await bot.answer_message(body=report, bubbles=markup)
-
         except Exception as e:
-            await bot.answer_message(body=f"❌ **Ошибка при обработке файла:**\n`{e}`")
-
+            await bot.answer_message(body=f"❌ **Произошла ошибка при поиске:**\n`{e}`")
         return
+
+    # ─── ШАГ 3: ОБРАБОТКА НАЖАТИЯ НА КНОПКУ ОТДЕЛА ───
+    elif current_state == "WAIT_FOR_DEPT_SELECTION":
+        if msg_text == "/cancel_dept":
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT"
+            await bot.answer_message(body="Введите часть названия подразделения (например, `сопровожд`):")
+            return
+
+        if not msg_text.startswith("/select_dept "):
+            await bot.answer_message("Пожалуйста, нажмите на одну из кнопок.")
+            return
+
+        dept_name = msg_text.replace("/select_dept ", "").strip()
+
+        USER_STATES[user_huid]["selected_dept"] = dept_name
+        USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_DEPT"
+
+        markup = BubbleMarkup()
+        markup.add_button(command="/confirm_add_dept", label="Да, добавить")
+        markup.add_button(command="/cancel_add", label="Нет, отмена")
+
+        await bot.answer_message(
+            body=f"Вы точно хотите добавить пользователей подразделения **{dept_name},{}**?",
+            bubbles=markup
+        )
+        return 
+Надо чтобы он вывел  body=f"Вы точно хотите добавить пользователей подразделения **{dept_name},{}**?", не только название подразделения но и сколько людей в этом подразделении.
