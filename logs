@@ -1,1 +1,1 @@
-Ошибка генерации файла: Не удалось найти эндпоинт отправки. Ошибки: ['https://24.akbars.ru/api/v3/botx/bots/82c5d19e-ff68-509a-a189-f5ccf2bce9a3/events -> 404', 'https://24.akbars.ru/api/v2/botx/bots/82c5d19e-ff68-509a-a189-f5ccf2bce9a3/events -> 404', 'https://24.akbars.ru/api/v4/botx/bots/82c5d19e-ff68-509a-a189-f5ccf2bce9a3/events -> 404']
+Ошибка генерации файла: Document.__init__() got an unexpected keyword argument 'file_name'
