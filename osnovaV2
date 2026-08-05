@@ -6,11 +6,11 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
     await bot.answer_message(body="⏳ Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...")
     
     try:
-        # 1. Скачиваем список всех пользователей
         bot_id_str = str(settings.express.uuid)
         cts_url = str(settings.express.cts_url).rstrip("/")
         token = await get_botx_token(bot_id_str, cts_url)
 
+        # 1. Скачиваем список всех пользователей
         async with httpx.AsyncClient(timeout=60.0) as client:
             csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
             headers = {"Authorization": f"Bearer {token}"}
@@ -19,7 +19,6 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             resp.raise_for_status()
             csv_text = resp.text
 
-        # 2. Перекодируем в utf-8-sig
         file_bytes = csv_text.encode('utf-8-sig')
 
         caption = (
@@ -29,68 +28,87 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         )
 
         import base64
-        import inspect
-        import tempfile
-        import os
-        
+        import uuid
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
         
-        # Сохраняем во временный файл на случай, если библиотека требует физический путь
-        tmp_path = ""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
+        raw_attachment = {
+            "type": "document",
+            "data": {
+                "file_name": "express_users.csv",
+                "content": data_uri
+            }
+        }
+        
+        # Получаем ID чата для отправки (твоя личка с ботом)
+        raw_cmd = getattr(message, "raw_command", {})
+        if hasattr(raw_cmd, "dict"): raw_cmd = raw_cmd.dict()
+        elif not isinstance(raw_cmd, dict): raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
+        chat_id = raw_cmd.get("from", {}).get("group_chat_id")
 
-        doc_fields = []
-        answer_params = []
-        try:
-            from pybotx import Document
+        if not chat_id:
+            await bot.answer_message(body="❌ Не удалось определить чат для отправки файла.")
+            return
+
+        success = False
+        errors = []
+        
+        # 🚀 ПОПЫТКА 1: Используем внутренний метод send_message
+        bot_client = getattr(bot, 'client', None) or getattr(bot, '_client', None) or getattr(bot, 'botx_client', None)
+        targets = [bot, bot_client]
+        
+        for t in targets:
+            if not t: continue
+            if hasattr(t, 'send_message'):
+                try:
+                    await t.send_message(group_chat_id=chat_id, body=caption, attachments=[raw_attachment])
+                    success = True
+                    break
+                except Exception as e:
+                    errors.append(f"bot_api_err: {e}")
+
+        # 🚀 ПОПЫТКА 2: Если метода нет, отправляем запрос в правильный BotX API (не в CTS!)
+        if not success:
+            botx_api = getattr(settings.express, 'botx_api', None) or getattr(settings.express, 'botx_url', None)
             
-            # 🌟 АВТОПИЛОТ: Читаем исходный код класса Document прямо в памяти!
-            if hasattr(Document, '__fields__'):
-                doc_fields = list(Document.__fields__.keys())
-            elif hasattr(Document, 'model_fields'):
-                doc_fields = list(Document.model_fields.keys())
+            if botx_api:
+                botx_api = str(botx_api).rstrip("/")
+                payload = {
+                    "bot_id": bot_id_str,
+                    "events": [{
+                        "sync_id": str(uuid.uuid4()),
+                        "type": "command",
+                        "group_chat_id": chat_id,
+                        "command": {"body": caption, "command_type": "user"},
+                        "attachments": [raw_attachment]
+                    }]
+                }
+                async with httpx.AsyncClient(timeout=30.0) as http:
+                    headers_api = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                    for ver in ["v3", "v2", "v4"]:
+                        url = f"{botx_api}/api/{ver}/botx/events"
+                        try:
+                            r = await http.post(url, headers=headers_api, json=payload)
+                            if r.status_code not in (404, 405):
+                                r.raise_for_status()
+                                success = True
+                                break
+                            errors.append(f"HTTP {r.status_code} at {url}")
+                        except Exception as e:
+                            errors.append(f"HTTP_req_err {url}: {e}")
             else:
-                doc_fields = list(inspect.signature(Document.__init__).parameters.keys())
+                errors.append("В настройках settings.express не найден URL botx_api")
 
-            doc_kwargs = {}
-            # Подставляем правильное имя файла
-            if "filename" in doc_fields: doc_kwargs["filename"] = "express_users.csv"
-            elif "file_name" in doc_fields: doc_kwargs["file_name"] = "express_users.csv"
-            
-            # Подставляем правильный контент
-            if "data_uri" in doc_fields: doc_kwargs["data_uri"] = data_uri
-            elif "url" in doc_fields: doc_kwargs["url"] = data_uri
-            elif "path" in doc_fields: doc_kwargs["path"] = tmp_path
-            elif "file_path" in doc_fields: doc_kwargs["file_path"] = tmp_path
-            elif "file" in doc_fields: doc_kwargs["file"] = tmp_path
-            
-            # Создаем объект с теми аргументами, которые он реально просит
-            doc = Document(**doc_kwargs)
+        # 🔍 ЕСЛИ ВСЕ УПАЛО: Выводим системную отладку
+        if not success:
+            s_dict = {k: v for k, v in settings.express.dict().items() if 'secret' not in k.lower()}
+            debug_msg = (
+                f"❌ Не удалось отправить файл.\n"
+                f"Ошибки: {errors}\n\n"
+                f"Настройки: {s_dict}\n"
+                f"Методы бота: {[m for m in dir(bot) if 'message' in m or 'file' in m]}"
+            )
+            await bot.answer_message(body=debug_msg[:3000])
 
-            # 🌟 АВТОПИЛОТ: Читаем исходный код метода bot.answer_message!
-            sig = inspect.signature(bot.answer_message)
-            answer_params = list(sig.parameters.keys())
-            
-            ans_kwargs = {"body": caption}
-            if "document" in answer_params: ans_kwargs["document"] = doc
-            elif "file" in answer_params: ans_kwargs["file"] = doc
-            elif "attachment" in answer_params: ans_kwargs["attachment"] = doc
-            
-            # Отправляем сообщение
-            await bot.answer_message(**ans_kwargs)
-            
-        except Exception as pybotx_err:
-            # Если не вышло — мы хотя бы получим точные списки параметров!
-            debug_info = f"Document fields: {doc_fields}\nAnswer params: {answer_params}"
-            await bot.answer_message(f"❌ Ошибка адаптера отправки.\n`{debug_info}`\nТекст ошибки: {pybotx_err}")
-            
-        finally:
-            # Удаляем временный файл, чтобы не мусорить на сервере
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            
     except Exception as e:
-        await bot.answer_message(f"❌ Ошибка генерации файла: {e}")
+        await bot.answer_message(f"❌ Критическая ошибка генерации файла: {e}")
