@@ -1,1 +1,4 @@
-Ошибка библиотеки pybotx при отправке: TypeError: Bot.answer_message() got an unexpected keyword argument 'attachments'
+Ошибка адаптера отправки.
+Document fields: ['self', 'type', 'filename', 'size', 'is_async_file', '_file_id', '_file_url', '_file_mimetype', '_file_hash']
+Answer params: []
+Текст ошибки: Document.__init__() missing 7 required positional arguments: 'type', 'size', 'is_async_file', '_file_id', '_file_url', '_file_mimetype', and '_file_hash'
