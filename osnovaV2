@@ -6,7 +6,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
     await bot.answer_message(body="⏳ Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...")
     
     try:
-        # Скачиваем список всех пользователей
+        # 1. Скачиваем список всех пользователей
         bot_id_str = str(settings.express.uuid)
         cts_url = str(settings.express.cts_url).rstrip("/")
         token = await get_botx_token(bot_id_str, cts_url)
@@ -19,7 +19,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             resp.raise_for_status()
             csv_text = resp.text
 
-        # Перекодируем в utf-8-sig чтобы Excel сразу открывал без кракозябр
+        # 2. Перекодируем в utf-8-sig
         file_bytes = csv_text.encode('utf-8-sig')
 
         caption = (
@@ -28,26 +28,69 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
         )
 
-        # Кодируем файл в Base64 для передачи через JSON
         import base64
+        import inspect
+        import tempfile
+        import os
+        
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
+        
+        # Сохраняем во временный файл на случай, если библиотека требует физический путь
+        tmp_path = ""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
 
-        # 🌟 СРАЗУ используем сырой словарь (без классов), который идеально ложится в схему API eXpress
+        doc_fields = []
+        answer_params = []
         try:
-            await bot.answer_message(
-                body=caption,
-                attachments=[{
-                    "type": "document",
-                    "data": {
-                        "file_name": "express_users.csv",
-                        "content": data_uri
-                    }
-                }]
-            )
+            from pybotx import Document
+            
+            # 🌟 АВТОПИЛОТ: Читаем исходный код класса Document прямо в памяти!
+            if hasattr(Document, '__fields__'):
+                doc_fields = list(Document.__fields__.keys())
+            elif hasattr(Document, 'model_fields'):
+                doc_fields = list(Document.model_fields.keys())
+            else:
+                doc_fields = list(inspect.signature(Document.__init__).parameters.keys())
+
+            doc_kwargs = {}
+            # Подставляем правильное имя файла
+            if "filename" in doc_fields: doc_kwargs["filename"] = "express_users.csv"
+            elif "file_name" in doc_fields: doc_kwargs["file_name"] = "express_users.csv"
+            
+            # Подставляем правильный контент
+            if "data_uri" in doc_fields: doc_kwargs["data_uri"] = data_uri
+            elif "url" in doc_fields: doc_kwargs["url"] = data_uri
+            elif "path" in doc_fields: doc_kwargs["path"] = tmp_path
+            elif "file_path" in doc_fields: doc_kwargs["file_path"] = tmp_path
+            elif "file" in doc_fields: doc_kwargs["file"] = tmp_path
+            
+            # Создаем объект с теми аргументами, которые он реально просит
+            doc = Document(**doc_kwargs)
+
+            # 🌟 АВТОПИЛОТ: Читаем исходный код метода bot.answer_message!
+            sig = inspect.signature(bot.answer_message)
+            answer_params = list(sig.parameters.keys())
+            
+            ans_kwargs = {"body": caption}
+            if "document" in answer_params: ans_kwargs["document"] = doc
+            elif "file" in answer_params: ans_kwargs["file"] = doc
+            elif "attachment" in answer_params: ans_kwargs["attachment"] = doc
+            
+            # Отправляем сообщение
+            await bot.answer_message(**ans_kwargs)
+            
         except Exception as pybotx_err:
-            # Если pybotx все-таки отвергнет сырой словарь, мы увидим его точные требования
-            await bot.answer_message(f"❌ Ошибка библиотеки pybotx: {type(pybotx_err).__name__} -> {str(pybotx_err)}")
+            # Если не вышло — мы хотя бы получим точные списки параметров!
+            debug_info = f"Document fields: {doc_fields}\nAnswer params: {answer_params}"
+            await bot.answer_message(f"❌ Ошибка адаптера отправки.\n`{debug_info}`\nТекст ошибки: {pybotx_err}")
+            
+        finally:
+            # Удаляем временный файл, чтобы не мусорить на сервере
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             
     except Exception as e:
         await bot.answer_message(f"❌ Ошибка генерации файла: {e}")
