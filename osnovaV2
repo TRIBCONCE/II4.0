@@ -19,6 +19,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             resp.raise_for_status()
             csv_text = resp.text
 
+        # Перекодируем в формат для Excel
         file_bytes = csv_text.encode('utf-8-sig')
 
         caption = (
@@ -28,74 +29,27 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         )
 
         import base64
-        import uuid
-        
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
-        
-        # Наш "сырой" файл в формате Data URI (поддерживается eXpress нативно)
-        raw_attachment = {
-            "type": "document",
-            "data": {
-                "file_name": "express_users.csv",
-                "content": data_uri
-            }
-        }
-        
-        # Добываем ID чата из сообщения
-        raw_cmd = getattr(message, "raw_command", {})
-        if hasattr(raw_cmd, "dict"): raw_cmd = raw_cmd.dict()
-        elif not isinstance(raw_cmd, dict): raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
-        chat_id_str = raw_cmd.get("from", {}).get("group_chat_id")
 
-        if not chat_id_str:
-            await bot.answer_message(body="❌ Не удалось определить чат для отправки файла.")
-            return
+        # 🌟 НАША ОТМЫЧКА: Создаем класс, который притворяется внутренним объектом pybotx
+        class MagicFile:
+            def __init__(self, filename, raw_bytes, uri):
+                self.filename = filename     # Одни версии ищут filename
+                self.file_name = filename    # Другие file_name
+                self.name = filename
+                self.content = raw_bytes     # Та самая строчка, из-за которой была ошибка!
+                self.data_uri = uri
+                self.url = uri
 
-        chat_uuid = uuid.UUID(chat_id_str)
-        bot_uuid = settings.express.uuid
+        # Создаем наш идеальный "файл-хамелеон"
+        my_file = MagicFile("express_users.csv", file_bytes, data_uri)
 
-        # 🚀 УМНЫЙ ПЕРЕБОР: Пробуем ВСЕ возможные комбинации, которые когда-либо существовали в pybotx
-        attempts = [
-            # Варианты для bot.answer_message (без bot_id)
-            (bot.answer_message, {"body": caption, "file": raw_attachment}),
-            (bot.answer_message, {"body": caption, "document": raw_attachment}),
-            (bot.answer_message, {"body": caption, "attachments": [raw_attachment]}),
-            
-            # Варианты для bot.send_message (с bot_id как UUID)
-            (bot.send_message, {"bot_id": bot_uuid, "chat_id": chat_uuid, "body": caption, "file": raw_attachment}),
-            (bot.send_message, {"bot_id": bot_uuid, "chat_id": chat_uuid, "body": caption, "document": raw_attachment}),
-            (bot.send_message, {"bot_id": bot_uuid, "chat_id": chat_uuid, "body": caption, "attachments": [raw_attachment]}),
-            (bot.send_message, {"bot_id": bot_uuid, "group_chat_id": chat_uuid, "body": caption, "file": raw_attachment}),
-            
-            # Варианты для bot.send_message (с bot_id как строкой, на случай старых версий)
-            (bot.send_message, {"bot_id": bot_id_str, "chat_id": chat_id_str, "body": caption, "file": raw_attachment}),
-            (bot.send_message, {"bot_id": bot_id_str, "chat_id": chat_id_str, "body": caption, "attachments": [raw_attachment]}),
-        ]
-
-        success = False
-        errors = []
-
-        for method, kwargs in attempts:
-            try:
-                await method(**kwargs)
-                success = True
-                break  # Как только одна комбинация сработала - прерываем цикл!
-            except TypeError as e:
-                # Ошибки несовпадения аргументов (пропускаем и пробуем следующую комбинацию)
-                if "unexpected keyword argument" in str(e) or "missing" in str(e):
-                    errors.append(f"{method.__name__}({list(kwargs.keys())}): {e}")
-                else:
-                    # Ошибки валидации типов от Pydantic
-                    errors.append(f"{method.__name__}({list(kwargs.keys())}): Type/Pydantic Error -> {e}")
-            except Exception as e:
-                # Другие системные ошибки
-                errors.append(f"{method.__name__}({list(kwargs.keys())}): {type(e).__name__} -> {e}")
-
-        # Если ни один из вариантов не подошел, вываливаем красивый лог
-        if not success:
-            debug_info = "\n".join(errors)
-            await bot.answer_message(body=f"❌ Все варианты отправки отклонены библиотекой.\n`{debug_info[:3000]}`")
+        try:
+            # Отправляем самым простым и лаконичным способом
+            await bot.answer_message(body=caption, file=my_file)
+        except Exception as pybotx_err:
+            await bot.answer_message(f"❌ Последняя ошибка pybotx: {type(pybotx_err).__name__} -> {pybotx_err}")
 
     except Exception as e:
         await bot.answer_message(f"❌ Критическая ошибка генерации файла: {e}")
