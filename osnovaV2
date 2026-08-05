@@ -6,7 +6,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
     await bot.answer_message(body="⏳ Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...")
     
     try:
-        # 1. Скачиваем список всех пользователей
+        # Скачиваем список всех пользователей
         bot_id_str = str(settings.express.uuid)
         cts_url = str(settings.express.cts_url).rstrip("/")
         token = await get_botx_token(bot_id_str, cts_url)
@@ -19,7 +19,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             resp.raise_for_status()
             csv_text = resp.text
 
-        # 2. Перекодируем в utf-8-sig чтобы Excel сразу открывал без кракозябр
+        # Перекодируем в utf-8-sig чтобы Excel сразу открывал без кракозябр
         file_bytes = csv_text.encode('utf-8-sig')
 
         caption = (
@@ -28,13 +28,12 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             "*Обязательно выбери канал из всплывающего синего списка мессенджера!*"
         )
 
-        # 3. Кодируем файл в Base64
+        # Кодируем файл в Base64 для передачи через JSON
         import base64
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
 
-        # 4. 🌟 НАСТОЯЩАЯ МАГИЯ: Отправляем файл сырым словарем! 
-        # Pydantic (на котором написан pybotx) автоматически спарсит этот словарь в нужный класс
+        # 🌟 СРАЗУ используем сырой словарь (без классов), который идеально ложится в схему API eXpress
         try:
             await bot.answer_message(
                 body=caption,
@@ -47,8 +46,8 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
                 }]
             )
         except Exception as pybotx_err:
-            # Если даже этот железобетонный метод выдаст ошибку, мы увидим её точный текст
-            await bot.answer_message(f"❌ Ошибка библиотеки pybotx при отправке: {type(pybotx_err).__name__}: {str(pybotx_err)}")
+            # Если pybotx все-таки отвергнет сырой словарь, мы увидим его точные требования
+            await bot.answer_message(f"❌ Ошибка библиотеки pybotx: {type(pybotx_err).__name__} -> {str(pybotx_err)}")
             
     except Exception as e:
         await bot.answer_message(f"❌ Ошибка генерации файла: {e}")
