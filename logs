@@ -1,4 +1,4 @@
-Ошибка адаптера отправки.
-Document fields: ['self', 'type', 'filename', 'size', 'is_async_file', '_file_id', '_file_url', '_file_mimetype', '_file_hash']
-Answer params: []
-Текст ошибки: Document.__init__() missing 7 required positional arguments: 'type', 'size', 'is_async_file', '_file_id', '_file_url', '_file_mimetype', and '_file_hash'
+Не удалось отправить файл.
+Ошибки: ["bot_api_err: Bot.send_message() got an unexpected keyword argument 'group_chat_id'", 'В настройках settings.express не найден URL botx_api']
+Настройки: {'uuid': UUID('82c5d19e-ff68-509a-a189-f5ccf2bce9a3'), 'cts_url': AnyHttpUrl('https://24.akbars.ru', )}
+Методы бота: ['answer_message', 'delete_message', 'download_file', 'edit_message', 'get_message_status', 'pin_message', 'reply_message', 'send_message', 'unpin_message', 'update_user_profile', 'upload_file', 'upload_static_file']
