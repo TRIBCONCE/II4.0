@@ -1,2 +1,10 @@
-шибка отправки: TypeError -> Bot.send_message() missing 1 required keyword-only argument: 'bot_id'
-Ключи: ['chat_id', 'body']
+Все варианты отправки отклонены библиотекой.
+answer_message(['body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
+answer_message(['body', 'document']): Bot.answer_message() got an unexpected keyword argument 'document'
+answer_message(['body', 'attachments']): Bot.answer_message() got an unexpected keyword argument 'attachments'
+send_message(['bot_id', 'chat_id', 'body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
+send_message(['bot_id', 'chat_id', 'body', 'document']): Bot.send_message() got an unexpected keyword argument 'document'
+send_message(['bot_id', 'chat_id', 'body', 'attachments']): Bot.send_message() got an unexpected keyword argument 'attachments'
+send_message(['bot_id', 'group_chat_id', 'body', 'file']): Bot.send_message() got an unexpected keyword argument 'group_chat_id'
+send_message(['bot_id', 'chat_id', 'body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
+send_message(['bot_id', 'chat_id', 'body', 'attachments']): Bot.send_message() got an unexpected keyword argument 'attachments'
