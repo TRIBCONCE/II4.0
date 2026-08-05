@@ -1,10 +1,3 @@
-Все варианты отправки отклонены библиотекой.
-answer_message(['body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
-answer_message(['body', 'document']): Bot.answer_message() got an unexpected keyword argument 'document'
-answer_message(['body', 'attachments']): Bot.answer_message() got an unexpected keyword argument 'attachments'
-send_message(['bot_id', 'chat_id', 'body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
-send_message(['bot_id', 'chat_id', 'body', 'document']): Bot.send_message() got an unexpected keyword argument 'document'
-send_message(['bot_id', 'chat_id', 'body', 'attachments']): Bot.send_message() got an unexpected keyword argument 'attachments'
-send_message(['bot_id', 'group_chat_id', 'body', 'file']): Bot.send_message() got an unexpected keyword argument 'group_chat_id'
-send_message(['bot_id', 'chat_id', 'body', 'file']): AttributeError -> 'dict' object has no attribute 'content'
-send_message(['bot_id', 'chat_id', 'body', 'attachments']): Bot.send_message() got an unexpected keyword argument 'attachments'
+HUID,AD Login,Domain,AD E-mail,Name,Sync source,Active,Kind,User DN,Company,Department,Position,Avatar,Avatar preview,Office,Manager,Manager HUID,Manager DN,Description,Phone,Other phone,IP phone,Other IP phone,Personnel number,AD Groups
+45798fb9-563f-500e-9d03,maскрылv,abb-win,скрыл@akbars.ru,ФИО СКРЫЛ,openid,true,cts_user,,Ак Барс Банк,"Дополнительный офис ""Набережночелнинский №8""",Ведущий менеджер по операционно-кассовой работе,,,,ФИО СКРЫЛ,,"CN=ФИО СКРЫЛ,OU=C,OU=ZK,OU=FIL Users,OU=Пользователи и группы,OU=Головной офис,DC=abb-win,DC=akbars,DC=ru","Дополнительный офис ""Набережночелнинский №10""",,45177,,,,
+Всё наконецто файл сформирован но он теперь выдаёт вот такую белебирду, надо расделить до отправки разделить эти строки на столбцы а так же убрать для вывода Avatar,Avatar preview,Office,Manager,Manager HUID,Manager DN,Description,Phone,Other phone,IP phone,Other IP phone,Personnel number,AD Groups
