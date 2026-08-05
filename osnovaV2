@@ -10,7 +10,7 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         cts_url = str(settings.express.cts_url).rstrip("/")
         token = await get_botx_token(bot_id_str, cts_url)
 
-        # 1. Скачиваем список всех пользователей
+        # Скачиваем список пользователей
         async with httpx.AsyncClient(timeout=60.0) as client:
             csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
             headers = {"Authorization": f"Bearer {token}"}
@@ -28,10 +28,13 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         )
 
         import base64
+        import inspect
         import uuid
+        
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
         
+        # Наш "сырой" файл, который отлично переваривается eXpress
         raw_attachment = {
             "type": "document",
             "data": {
@@ -40,75 +43,43 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             }
         }
         
-        # Получаем ID чата для отправки (твоя личка с ботом)
+        # Добываем ID чата из сообщения
         raw_cmd = getattr(message, "raw_command", {})
         if hasattr(raw_cmd, "dict"): raw_cmd = raw_cmd.dict()
         elif not isinstance(raw_cmd, dict): raw_cmd = vars(raw_cmd) if hasattr(raw_cmd, "__dict__") else {}
-        chat_id = raw_cmd.get("from", {}).get("group_chat_id")
+        chat_id_str = raw_cmd.get("from", {}).get("group_chat_id")
 
-        if not chat_id:
+        if not chat_id_str:
             await bot.answer_message(body="❌ Не удалось определить чат для отправки файла.")
             return
 
-        success = False
-        errors = []
-        
-        # 🚀 ПОПЫТКА 1: Используем внутренний метод send_message
-        bot_client = getattr(bot, 'client', None) or getattr(bot, '_client', None) or getattr(bot, 'botx_client', None)
-        targets = [bot, bot_client]
-        
-        for t in targets:
-            if not t: continue
-            if hasattr(t, 'send_message'):
-                try:
-                    await t.send_message(group_chat_id=chat_id, body=caption, attachments=[raw_attachment])
-                    success = True
-                    break
-                except Exception as e:
-                    errors.append(f"bot_api_err: {e}")
+        # Важно! В pybotx часто требуется передавать именно объект UUID, а не просто строку
+        chat_id = uuid.UUID(chat_id_str)
 
-        # 🚀 ПОПЫТКА 2: Если метода нет, отправляем запрос в правильный BotX API (не в CTS!)
-        if not success:
-            botx_api = getattr(settings.express, 'botx_api', None) or getattr(settings.express, 'botx_url', None)
+        # 🚀 АВТОПИЛОТ: Читаем код библиотеки и подстраиваемся под него
+        sig = inspect.signature(bot.send_message)
+        params = sig.parameters
+        
+        kwargs = {}
+        
+        # Подбираем правильное название аргумента для чата
+        if "chat_id" in params: kwargs["chat_id"] = chat_id
+        elif "group_chat_id" in params: kwargs["group_chat_id"] = chat_id
+        elif "peer_id" in params: kwargs["peer_id"] = chat_id
             
-            if botx_api:
-                botx_api = str(botx_api).rstrip("/")
-                payload = {
-                    "bot_id": bot_id_str,
-                    "events": [{
-                        "sync_id": str(uuid.uuid4()),
-                        "type": "command",
-                        "group_chat_id": chat_id,
-                        "command": {"body": caption, "command_type": "user"},
-                        "attachments": [raw_attachment]
-                    }]
-                }
-                async with httpx.AsyncClient(timeout=30.0) as http:
-                    headers_api = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-                    for ver in ["v3", "v2", "v4"]:
-                        url = f"{botx_api}/api/{ver}/botx/events"
-                        try:
-                            r = await http.post(url, headers=headers_api, json=payload)
-                            if r.status_code not in (404, 405):
-                                r.raise_for_status()
-                                success = True
-                                break
-                            errors.append(f"HTTP {r.status_code} at {url}")
-                        except Exception as e:
-                            errors.append(f"HTTP_req_err {url}: {e}")
-            else:
-                errors.append("В настройках settings.express не найден URL botx_api")
+        # Подбираем название для текста
+        if "body" in params: kwargs["body"] = caption
+        elif "text" in params: kwargs["text"] = caption
+        
+        # Подбираем название для вложений
+        if "attachments" in params: kwargs["attachments"] = [raw_attachment]
+        elif "attachment" in params: kwargs["attachment"] = raw_attachment
 
-        # 🔍 ЕСЛИ ВСЕ УПАЛО: Выводим системную отладку
-        if not success:
-            s_dict = {k: v for k, v in settings.express.dict().items() if 'secret' not in k.lower()}
-            debug_msg = (
-                f"❌ Не удалось отправить файл.\n"
-                f"Ошибки: {errors}\n\n"
-                f"Настройки: {s_dict}\n"
-                f"Методы бота: {[m for m in dir(bot) if 'message' in m or 'file' in m]}"
-            )
-            await bot.answer_message(body=debug_msg[:3000])
+        try:
+            # Наконец-то отправляем с идеальными аргументами!
+            await bot.send_message(**kwargs)
+        except Exception as pybotx_err:
+            await bot.answer_message(f"❌ Ошибка отправки: {type(pybotx_err).__name__} -> {pybotx_err}\nКлючи: {list(kwargs.keys())}")
 
     except Exception as e:
         await bot.answer_message(f"❌ Критическая ошибка генерации файла: {e}")
