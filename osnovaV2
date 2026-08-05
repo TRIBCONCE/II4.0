@@ -10,17 +10,47 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         cts_url = str(settings.express.cts_url).rstrip("/")
         token = await get_botx_token(bot_id_str, cts_url)
 
-        # Скачиваем список пользователей
+        # 1. Скачиваем список пользователей
         async with httpx.AsyncClient(timeout=60.0) as client:
             csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
             headers = {"Authorization": f"Bearer {token}"}
             params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
             resp = await client.get(csv_url, headers=headers, params=params)
             resp.raise_for_status()
-            csv_text = resp.text
+            raw_csv_text = resp.text
 
-        # Перекодируем в формат для Excel
-        file_bytes = csv_text.encode('utf-8-sig')
+        # 2. 🌟 ПЕРЕСОБИРАЕМ CSV: удаляем лишнее и ставим точку с запятой для Excel
+        import csv
+        import io
+        
+        # Читаем исходный текст (от eXpress он приходит с запятыми)
+        input_file = io.StringIO(raw_csv_text)
+        reader = csv.DictReader(input_file, delimiter=',')
+        
+        # Список колонок, которые нужно ВЫКИНУТЬ
+        columns_to_drop = [
+            "Avatar", "Avatar preview", "Office", "Manager", "Manager HUID", 
+            "Manager DN", "Description", "Phone", "Other phone", "IP phone", 
+            "Other IP phone", "Personnel number", "AD Groups"
+        ]
+        
+        # Оставляем только нужные колонки
+        fieldnames = []
+        if reader.fieldnames:
+            fieldnames = [col for col in reader.fieldnames if col not in columns_to_drop]
+            
+        output_file = io.StringIO()
+        # Записываем с delimiter=';' — именно это заставит Excel разбить текст на столбцы!
+        writer = csv.DictWriter(output_file, fieldnames=fieldnames, delimiter=';', extrasaction='ignore')
+        
+        writer.writeheader()
+        for row in reader:
+            writer.writerow(row)
+            
+        processed_csv_text = output_file.getvalue()
+
+        # 3. Перекодируем в формат для Excel (utf-8-sig добавляет спец-метку BOM)
+        file_bytes = processed_csv_text.encode('utf-8-sig')
 
         caption = (
             "Оставьте только нужных пользователей для добавления, а так же не удаляйте заголовки.\n\n"
@@ -32,21 +62,19 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
 
-        # 🌟 НАША ОТМЫЧКА: Создаем класс, который притворяется внутренним объектом pybotx
+        # 4. НАША ОТМЫЧКА для pybotx
         class MagicFile:
             def __init__(self, filename, raw_bytes, uri):
-                self.filename = filename     # Одни версии ищут filename
-                self.file_name = filename    # Другие file_name
+                self.filename = filename     
+                self.file_name = filename    
                 self.name = filename
-                self.content = raw_bytes     # Та самая строчка, из-за которой была ошибка!
+                self.content = raw_bytes     
                 self.data_uri = uri
                 self.url = uri
 
-        # Создаем наш идеальный "файл-хамелеон"
-        my_file = MagicFile("express_users.csv", file_bytes, data_uri)
+        my_file = MagicFile("express_users_clean.csv", file_bytes, data_uri)
 
         try:
-            # Отправляем самым простым и лаконичным способом
             await bot.answer_message(body=caption, file=my_file)
         except Exception as pybotx_err:
             await bot.answer_message(f"❌ Последняя ошибка pybotx: {type(pybotx_err).__name__} -> {pybotx_err}")
