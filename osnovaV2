@@ -3,12 +3,11 @@
 import base64
 import csv
 import io
+import os
 import httpx
 from pybotx import Bot, HandlerCollector, IncomingMessage, BubbleMarkup
 
 from src.config import settings
-
-# Импортируем наши новые модули
 from src.services.ad_service import search_ad_departments, get_ad_users_by_dept
 from src.services.express_service import (
     get_botx_token, 
@@ -21,8 +20,9 @@ from src.services.express_service import (
 
 # ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────────────────
 collector = HandlerCollector()
-USER_STATES = {}
 
+# FSM: { "user_huid": {"state": "...", "authenticated": True/False, ...} }
+USER_STATES = {}
 
 def get_main_menu_markup() -> BubbleMarkup:
     markup = BubbleMarkup()
@@ -33,21 +33,34 @@ def get_main_menu_markup() -> BubbleMarkup:
     return markup
 
 
+# 🌟 Вспомогательная функция защиты: проверяет, ввел ли юзер пароль
+async def check_auth(user_huid: str, bot: Bot) -> bool:
+    user_data = USER_STATES.get(user_huid, {})
+    if not user_data.get("authenticated"):
+        USER_STATES[user_huid] = {"state": "WAIT_FOR_PASSWORD", "authenticated": False}
+        await bot.answer_message("🔒 Бот защищен. Пожалуйста, введите пароль для доступа:")
+        return False
+    return True
+
+
 @collector.command("/start", description="Запуск бота")
 async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
+    # Сбрасываем стейт и требуем пароль
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_PASSWORD", "authenticated": False}
 
     await bot.answer_message(
-        body="Привет! Я бот для массового добавления и удаления пользователей.\n\nВыберите действие:",
-        bubbles=get_main_menu_markup()
+        body="🔒 Привет! Я бот для работы с пользователями eXpress.\n\nПожалуйста, введите пароль для доступа:"
     )
 
 
 @collector.command("/remove_all", visible=False)
 async def remove_all_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "REMOVE"}
+    if not await check_auth(user_huid, bot): return
+
+    USER_STATES[user_huid]["state"] = "WAIT_FOR_CHANNEL"
+    USER_STATES[user_huid]["flow"] = "REMOVE"
     await bot.answer_message(
         body="Выбрано: **Удалить пользователей**\n\n"
              "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
@@ -58,7 +71,10 @@ async def remove_all_handler(message: IncomingMessage, bot: Bot) -> None:
 @collector.command("/add_all", visible=False)
 async def add_all_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "ALL"}
+    if not await check_auth(user_huid, bot): return
+
+    USER_STATES[user_huid]["state"] = "WAIT_FOR_CHANNEL"
+    USER_STATES[user_huid]["flow"] = "ALL"
     await bot.answer_message(
         body="Выбрано: **Добавить всех активных**\n\n"
              "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
@@ -69,7 +85,10 @@ async def add_all_handler(message: IncomingMessage, bot: Bot) -> None:
 @collector.command("/add_by_dept", visible=False)
 async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "DEPT"}
+    if not await check_auth(user_huid, bot): return
+
+    USER_STATES[user_huid]["state"] = "WAIT_FOR_CHANNEL"
+    USER_STATES[user_huid]["flow"] = "DEPT"
     await bot.answer_message(
         body="Выбрано: **Добавить по подразделению**\n\n"
              "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
@@ -80,10 +99,12 @@ async def add_by_dept_handler(message: IncomingMessage, bot: Bot) -> None:
 @collector.command("/add_by_list", visible=False)
 async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
     user_huid = str(message.sender.huid)
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "LIST"}
+    if not await check_auth(user_huid, bot): return
 
-    await bot.answer_message(
-        body="⏳ Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...")
+    USER_STATES[user_huid]["state"] = "WAIT_FOR_CHANNEL"
+    USER_STATES[user_huid]["flow"] = "LIST"
+
+    await bot.answer_message(body="⏳ Формирую базу всех пользователей eXpress для редактирования, это займет пару секунд...")
 
     try:
         bot_id_str = str(settings.express.uuid)
@@ -151,6 +172,27 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     user_data = USER_STATES.get(user_huid, {})
     current_state = user_data.get("state")
     msg_text = message.body.strip()
+
+    # ─── ШАГ 0: АВТОРИЗАЦИЯ ───
+    if current_state == "WAIT_FOR_PASSWORD":
+        # Читаем пароль из .env (по умолчанию "secret", если забыли добавить)
+        CORRECT_PASSWORD = os.getenv("BOT_PASSWORD", "secret")
+        
+        if msg_text == CORRECT_PASSWORD:
+            USER_STATES[user_huid]["authenticated"] = True
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            
+            await bot.answer_message(
+                body="✅ Доступ разрешен!\n\nВыберите действие в меню:",
+                bubbles=get_main_menu_markup()
+            )
+        else:
+            await bot.answer_message("❌ Неверный пароль. Попробуйте еще раз:")
+        return
+
+    # Жесткая проверка: если стейт не WAIT_FOR_PASSWORD, но юзер не авторизован — блокируем
+    if not await check_auth(user_huid, bot):
+        return
 
     # ─── ШАГ 1: ПОЛУЧЕНИЕ И ПРОВЕРКА КАНАЛА ───
     if current_state == "WAIT_FOR_CHANNEL":
@@ -565,9 +607,8 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             await bot.answer_message(body=f"❌ **Произошла системная ошибка при добавлении:**\n`{e}`")
         return
 
-    # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
-    USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
+    # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ИЛИ ОНО СЛЕТЕЛО ───
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_PASSWORD", "authenticated": False}
     await bot.answer_message(
-        body="Привет! Я бот для массового добавления и удаления пользователей.\n\nВыберите действие:",
-        bubbles=get_main_menu_markup()
+        body="🔒 Бот защищен паролем. Пожалуйста, введите пароль для доступа:"
     )
