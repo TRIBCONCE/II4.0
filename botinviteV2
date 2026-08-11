@@ -24,7 +24,7 @@ USER_STATES = {}
 
 # TODO: Вставь сюда данные сервисной учетки
 LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "crhsk"
+LDAP_PASSWORD = "скрвл"
 LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
 
 
@@ -142,6 +142,7 @@ async def get_botx_token(bot_id_str: str, cts_url: str) -> str:
 
 
 async def get_chat_info(bot_id_str: str, cts_url: str, token: str, chat_id_str: str) -> dict:
+    """Извлекает информацию о чате и собирает списки админов и обычных участников."""
     async with httpx.AsyncClient() as client:
         info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -155,17 +156,24 @@ async def get_chat_info(bot_id_str: str, cts_url: str, token: str, chat_id_str: 
 
         is_admin = False
         member_huids = set()
+        admin_huids = set()  # 🌟 НОВОЕ: Собираем всех админов
 
         for m in members:
             huid = str(m.get("user_huid"))
             member_huids.add(huid)
+
+            # Если пользователь админ или создатель, добавляем в белый список
+            if m.get("admin", False):
+                admin_huids.add(huid)
+
             if huid == bot_id_str:
                 is_admin = m.get("admin", False)
 
         return {
             "status": "ADMIN" if is_admin else "MEMBER",
             "name": chat_data.get("name", "Неизвестный канал"),
-            "member_huids": member_huids
+            "member_huids": member_huids,
+            "admin_huids": admin_huids
         }
 
 
@@ -285,9 +293,7 @@ async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
                                 error_count += 1
                         except Exception:
                             error_count += 1
-
                     error_details.append(f"HTTP {resp.status_code} для пачки. Запущен Fallback.")
-
             except Exception as e:
                 for h in chunk:
                     try:
@@ -306,6 +312,50 @@ async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
     return success_count, error_count, error_details
 
 
+async def remove_members_from_chat_batch(chat_id: str, huids: list) -> tuple:
+    """🌟 НОВОЕ: Функция массового удаления пользователей из чата."""
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
+
+    success_count = 0
+    error_count = 0
+    error_details = []
+    chunk_size = 100  # На всякий случай удаляем пачками поменьше
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        remove_url = f"{cts_url}/api/v3/botx/chats/remove_user"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        for i in range(0, len(huids), chunk_size):
+            chunk = huids[i:i + chunk_size]
+            payload = {
+                "group_chat_id": chat_id,
+                "user_huids": chunk
+            }
+
+            try:
+                resp = await client.post(remove_url, headers=headers, json=payload)
+
+                # Если пакетный эндпоинт 404, запускаем поштучное удаление
+                if resp.status_code == 404:
+                    for h in chunk:
+                        alt_url = f"{cts_url}/api/v3/botx/chats/{chat_id}/members/{h}"
+                        r = await client.delete(alt_url, headers=headers)
+                        if r.status_code in (200, 204):
+                            success_count += 1
+                        else:
+                            error_count += 1
+                elif resp.status_code in (200, 201, 204):
+                    success_count += len(chunk)
+                else:
+                    error_count += len(chunk)
+                    error_details.append(f"HTTP {resp.status_code} для пачки.")
+            except Exception as e:
+                error_count += len(chunk)
+                error_details.append(f"Ошибка сети: {str(e)}")
+
+    return success_count, error_count, error_details
 
 
 # ─── 3. ХЕНДЛЕРЫ ДИАЛОГА ──────────────────────────────────────────────────
@@ -315,7 +365,7 @@ def get_main_menu_markup() -> BubbleMarkup:
     markup.add_button(command="/add_all", label="Добавить всех активных")
     markup.add_button(command="/add_by_dept", label="Добавить по подразделению")
     markup.add_button(command="/add_by_list", label="Добавить по списку")
-    markup.add_button(command="/get_users_list", label="Получить список пользователей")
+    markup.add_button(command="/remove_all", label="Удалить пользователей")  # 🌟 Заменили кнопку
     return markup
 
 
@@ -325,8 +375,19 @@ async def start_handler(message: IncomingMessage, bot: Bot) -> None:
     USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
 
     await bot.answer_message(
-        body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
+        body="Привет! Я бот для массового добавления и удаления пользователей.\n\nВыберите действие:",
         bubbles=get_main_menu_markup()
+    )
+
+
+@collector.command("/remove_all", visible=False)
+async def remove_all_handler(message: IncomingMessage, bot: Bot) -> None:
+    user_huid = str(message.sender.huid)
+    USER_STATES[user_huid] = {"state": "WAIT_FOR_CHANNEL", "flow": "REMOVE"}
+    await bot.answer_message(
+        body="Выбрано: **Удалить пользователей**\n\n"
+             "Пришли мне название целевого канала или группы в формате `##имяканала`.\n"
+             "*Внимание: Администраторы группы удалены не будут.*"
     )
 
 
@@ -374,26 +435,21 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             resp.raise_for_status()
             raw_csv_text = resp.text
 
-        # 2. 🌟 ПЕРЕСОБИРАЕМ CSV: удаляем лишнее и ставим точку с запятой для Excel
-
-        # Читаем исходный текст (от eXpress он приходит с запятыми)
+        # 2. ПЕРЕСОБИРАЕМ CSV
         input_file = io.StringIO(raw_csv_text)
         reader = csv.DictReader(input_file, delimiter=',')
 
-        # Список колонок, которые нужно ВЫКИНУТЬ
         columns_to_drop = [
             "Avatar", "Avatar preview", "Office", "Manager", "Manager HUID",
             "Manager DN", "Description", "Phone", "Other phone", "IP phone",
             "Other IP phone", "Personnel number", "AD Groups"
         ]
 
-        # Оставляем только нужные колонки
         fieldnames = []
         if reader.fieldnames:
             fieldnames = [col for col in reader.fieldnames if col not in columns_to_drop]
 
         output_file = io.StringIO()
-        # Записываем с delimiter=';' — именно это заставит Excel разбить текст на столбцы!
         writer = csv.DictWriter(output_file, fieldnames=fieldnames, delimiter=';', extrasaction='ignore')
 
         writer.writeheader()
@@ -401,8 +457,6 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
             writer.writerow(row)
 
         processed_csv_text = output_file.getvalue()
-
-        # 3. Перекодируем в формат для Excel (utf-8-sig добавляет спец-метку BOM)
         file_bytes = processed_csv_text.encode('utf-8-sig')
 
         caption = (
@@ -414,7 +468,6 @@ async def add_by_list_handler(message: IncomingMessage, bot: Bot) -> None:
         b64_content = base64.b64encode(file_bytes).decode('utf-8')
         data_uri = f"data:text/csv;base64,{b64_content}"
 
-        # 4. НАША ОТМЫЧКА для pybotx
         class MagicFile:
             def __init__(self, filename, raw_bytes, uri):
                 self.filename = filename
@@ -441,11 +494,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     user_data = USER_STATES.get(user_huid, {})
     current_state = user_data.get("state")
     msg_text = message.body.strip()
-
-    # ─── ОБРАБОТКА КНОПОК ЗАГЛУШЕК ───
-    if msg_text == "/get_users_list":
-        await bot.answer_message(body="Этот функционал находится в разработке.", bubbles=get_main_menu_markup())
-        return
 
     # ─── ШАГ 1: ПОЛУЧЕНИЕ И ПРОВЕРКА КАНАЛА ───
     if current_state == "WAIT_FOR_CHANNEL":
@@ -481,6 +529,9 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             USER_STATES[user_huid]["target_chat_name"] = chat_name
             USER_STATES[user_huid]["chat_members"] = chat_info.get("member_huids", set())
 
+            # Сохраняем админов для функции удаления
+            USER_STATES[user_huid]["admin_huids"] = chat_info.get("admin_huids", set())
+
             flow = user_data.get("flow")
 
             if flow == "ALL":
@@ -490,6 +541,23 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
                 markup.add_button(command="/cancel_add", label="Нет, отмена")
                 await bot.answer_message(
                     body=f"Вы точно готовы добавить **ВСЕХ** активных пользователей в канал **{chat_name}**?",
+                    bubbles=markup
+                )
+            elif flow == "REMOVE":
+                USER_STATES[user_huid]["state"] = "WAIT_FOR_CONFIRMATION_REMOVE"
+                markup = BubbleMarkup()
+                markup.add_button(command="/confirm_remove", label="Да, удалить всех")
+                markup.add_button(command="/cancel_add", label="Отмена")
+
+                members_count = len(USER_STATES[user_huid]["chat_members"])
+                admins_count = len(USER_STATES[user_huid]["admin_huids"])
+                to_delete = members_count - admins_count
+
+                await bot.answer_message(
+                    body=f"Вы точно хотите **УДАЛИТЬ ВСЕХ** обычных пользователей из канала **{chat_name}**?\n\n"
+                         f"👥 Всего участников: {members_count}\n"
+                         f"🛡 Администраторов: {admins_count}\n\n"
+                         f"🗑 Будет удалено: {to_delete} чел.",
                     bubbles=markup
                 )
             elif flow == "LIST":
@@ -533,7 +601,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
             markup.add_button(command="/cancel_dept", label="Отмена")
 
-            # Сохраняем результаты поиска для вывода количества на следующем шаге
             USER_STATES[user_huid]["ad_results"] = ad_results
             USER_STATES[user_huid]["state"] = "WAIT_FOR_DEPT_SELECTION"
             await bot.answer_message(
@@ -556,8 +623,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             return
 
         dept_name = msg_text.replace("/select_dept ", "").strip()
-
-        # Достаем сохраненное количество сотрудников
         saved_results = user_data.get("ad_results", {})
         dept_count = saved_results.get(dept_name, "?")
 
@@ -717,7 +782,63 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
         return
 
-        # ─── ШАГ 4 (В): ЗАГРУЗКА И ВАЛИДАЦИЯ ФАЙЛА (ПО СПИСКУ) ───
+    # ─── ШАГ 4 (В): ПОДТВЕРЖДЕНИЕ И УДАЛЕНИЕ (ВСЕХ КРОМЕ АДМИНОВ) ───
+    elif current_state == "WAIT_FOR_CONFIRMATION_REMOVE":
+        if msg_text == "/cancel_add":
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            await bot.answer_message(
+                body="❌ Операция отменена.\n\nВыберите следующее действие:",
+                bubbles=get_main_menu_markup()
+            )
+            return
+
+        if msg_text != "/confirm_remove":
+            await bot.answer_message("Пожалуйста, нажмите «Да, удалить всех» или «Отмена».")
+            return
+
+        chat_id = user_data.get("target_chat_id")
+        chat_name = user_data.get("target_chat_name")
+        current_members = user_data.get("chat_members", set())
+        admin_huids = user_data.get("admin_huids", set())
+
+        # Вычисляем, кого удалять: берем всех, и вычитаем список админов
+        huids_to_remove = list(current_members - admin_huids)
+
+        if not huids_to_remove:
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            await bot.answer_message(body="🤷‍♂️ В канале остались только администраторы, удалять некого!")
+            await bot.answer_message(body="Выберите следующее действие:", bubbles=get_main_menu_markup())
+            return
+
+        await bot.answer_message(
+            f"⏳ Начинаю процесс удаления {len(huids_to_remove)} пользователей из **{chat_name}**...")
+
+        try:
+            success_count, error_count, error_details = await remove_members_from_chat_batch(chat_id, huids_to_remove)
+
+            report = (
+                f"Готово. Результат очистки канала **{chat_name}**:\n\n"
+                f"✅ Успешно удалено: {success_count}\n"
+                f"🛡 Оставлено администраторов: {len(admin_huids)}\n"
+                f"❌ Ошибки при удалении: {error_count}\n"
+            )
+
+            if error_details:
+                err_str = "\n".join(f"• {e}" for e in set(error_details))
+                if len(err_str) > 1000:
+                    err_str = err_str[:1000] + "...\n(текст обрезан)"
+                report += f"\n**Детали ошибок API:**\n`{err_str}`\n"
+
+            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+            await bot.answer_message(body=report)
+            await bot.answer_message(body="Выберите следующее действие:", bubbles=get_main_menu_markup())
+
+        except Exception as e:
+            await bot.answer_message(body=f"❌ **Произошла системная ошибка при удалении:**\n`{e}`")
+
+        return
+
+    # ─── ШАГ 4 (Г): ЗАГРУЗКА И ВАЛИДАЦИЯ ФАЙЛА (ПО СПИСКУ) ───
     elif current_state == "WAIT_FOR_FILE_LIST":
         if msg_text in ("/cancel_add", "/cancel_dept"):
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
@@ -741,7 +862,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
                 await bot.answer_message("❌ Файл пуст или не удалось прочитать его содержимое.")
                 return
 
-            # Безопасное извлечение байтов
             import base64
             if isinstance(file_data, str) and "base64," in file_data:
                 b64_str = file_data.split("base64,")[1]
@@ -751,7 +871,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             else:
                 file_bytes = file_data
 
-            # Бронебойная раскодировка: перебираем все возможные варианты от Excel
             text = ""
             for enc in ['utf-8-sig', 'utf-8', 'cp1251', 'latin1']:
                 try:
@@ -760,7 +879,6 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
                 except UnicodeDecodeError:
                     continue
 
-            # Определяем разделитель по первой строке
             first_line = text.splitlines()[0] if text else ""
             delimiter = ';' if ';' in first_line else ','
 
@@ -768,20 +886,17 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
             import io
             reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
 
-            # Ищем колонку huid, игнорируя регистр, пробелы и невидимые символы (BOM)
             huid_col = None
             if reader.fieldnames:
                 for col in reader.fieldnames:
-                    # Очищаем от мусора
                     clean_col = col.replace('\ufeff', '').strip().lower()
                     if clean_col == "huid":
-                        huid_col = col  # Запоминаем оригинальное название колонки
+                        huid_col = col
                         break
 
             if not huid_col:
-                # Если не нашли — делаем "рентген" файла и выводим в чат!
                 debug_fields = str(reader.fieldnames)
-                debug_text = repr(text[:200])  # Берем первые 200 символов
+                debug_text = repr(text[:200])
                 await bot.answer_message(
                     body=f"❌ В файле не найдена обязательная колонка `huid`.\n\n"
                          f"🔍 **Как бот прочитал заголовки:**\n`{debug_fields}`\n\n"
@@ -833,7 +948,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
 
         return
 
-    # ─── ШАГ 4 (Г): ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ (ПО СПИСКУ) ───
+    # ─── ШАГ 4 (Д): ПОДТВЕРЖДЕНИЕ И ДОБАВЛЕНИЕ (ПО СПИСКУ) ───
     elif current_state == "WAIT_FOR_CONFIRMATION_LIST":
         if msg_text == "/cancel_add":
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
@@ -897,7 +1012,7 @@ async def default_handler(message: IncomingMessage, bot: Bot) -> None:
     # ─── ЕСЛИ СОСТОЯНИЯ НЕТ ───
     USER_STATES[user_huid] = {"state": "WAIT_FOR_ACTION"}
     await bot.answer_message(
-        body="Привет! Я бот для массового добавления пользователей.\n\nВыберите действие:",
+        body="Привет! Я бот для массового добавления и удаления пользователей.\n\nВыберите действие:",
         bubbles=get_main_menu_markup()
-    ) и так смотри всё работает вроде как теперь делаем последнюю кнопку, удаляем вот эту кнопку - markup.add_button(command="/get_users_list", label="Получить список пользователей") вместо неё надо Удаление пользователей. 
-Логика таже спрашиваем группу через ## потом проверека на дурака вы точно хотите удалить пользователей? и потом напиши метод удаления пользователей, удалить строго надо всех кроме администраторов. и потом отчёт по удалению количеству пользователей и сколько админов.
+    )
+Смотри вот рабочий код всё круто, но тут 1000 строк в одном месте, я думаю надо хотябы функции по другим классам и отдельным кодам раскидать немного структуру поменять но логику нужно оставить полностью такую
