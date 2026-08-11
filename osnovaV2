@@ -1,104 +1,188 @@
-# src/services/ad_service.py
+# src/services/express_service.py
 
-import asyncio
-import ssl
-from ldap3 import Server, Connection, ALL, SUBTREE, Tls
-from ldap3.utils.conv import escape_filter_chars
+import hmac
+import hashlib
+import httpx
+from src.config import settings
 
-# TODO: Вставь сюда данные сервисной учетки
-LDAP_USER = "ABB-WIN\\z-BorodinES"
-LDAP_PASSWORD = "скрвл"
-LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
+async def get_botx_token(bot_id_str: str, cts_url: str) -> str:
+    secret_bytes = settings.express.secret_key.encode('utf-8')
+    bot_id_bytes = bot_id_str.encode('utf-8')
+    signature = hmac.new(secret_bytes, bot_id_bytes, hashlib.sha256).hexdigest().upper()
 
-def _get_ad_connection():
-    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
-    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
+    async with httpx.AsyncClient() as client:
+        token_url = f"{cts_url}/api/v2/botx/bots/{bot_id_str}/token?signature={signature}"
+        resp = await client.get(token_url)
+        resp.raise_for_status()
+        return resp.json().get("result")
 
-    try:
-        real_search_base = server.info.other.get('defaultNamingContext')[0]
-    except Exception:
-        real_search_base = "DC=abb-win,DC=akbars,DC=ru"
+async def get_chat_info(bot_id_str: str, cts_url: str, token: str, chat_id_str: str) -> dict:
+    async with httpx.AsyncClient() as client:
+        info_url = f"{cts_url}/api/v3/botx/chats/info?group_chat_id={chat_id_str}"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        resp = await client.get(info_url, headers=headers)
+        if resp.status_code in (403, 404):
+            return {"status": "NOT_FOUND"}
+        resp.raise_for_status()
 
-    return conn, real_search_base
+        chat_data = resp.json().get("result", {})
+        members = chat_data.get("members", [])
 
-def search_ad_departments_sync(search_str: str) -> dict:
-    conn, real_search_base = _get_ad_connection()
-    search_str = search_str.lower()
+        is_admin = False
+        member_huids = set()
+        admin_huids = set()
 
-    ldap_filter = (
-        f"(&(objectCategory=person)(objectClass=user)"
-        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
-        f"(|(department=*{search_str}*)(division=*{search_str}*)"
-        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
-    )
+        for m in members:
+            huid = str(m.get("user_huid"))
+            member_huids.add(huid)
+            if m.get("admin", False):
+                admin_huids.add(huid)
+            if huid == bot_id_str:
+                is_admin = m.get("admin", False)
 
-    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 'distinguishedName']
-    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
-    results = {}
+        return {
+            "status": "ADMIN" if is_admin else "MEMBER",
+            "name": chat_data.get("name", "Неизвестный канал"),
+            "member_huids": member_huids,
+            "admin_huids": admin_huids
+        }
 
-    for entry in conn.entries:
-        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
-        name = str(entry.name.value).lower() if entry.name else ""
-        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
-        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+async def get_express_users_dict() -> dict:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
 
-        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
-                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
-                "$" in name or "администратор" in name or "тестовая" in name or
-                "отключенные пользователи" in dn or "сторон" in dn):
-            continue
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
+        resp = await client.get(csv_url, headers=headers, params=params)
+        resp.raise_for_status()
 
-        dept_name = "Неизвестное подразделение"
-        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
-            val = getattr(entry, attr).value if hasattr(entry, attr) else None
-            if val and search_str in str(val).lower():
-                dept_name = str(val)
+        csv_lines = resp.text.strip().split('\n')
+        if not csv_lines:
+            return {}
+
+        headers = [h.strip().lower() for h in csv_lines[0].split(',')]
+        idx_huid = headers.index("huid") if "huid" in headers else 0
+        idx_active = headers.index("active") if "active" in headers else 6
+        idx_name = headers.index("name") if "name" in headers else 4
+        
+        idx_mail = -1
+        for i, h in enumerate(headers):
+            if "mail" in h:
+                idx_mail = i
                 break
+        if idx_mail == -1: idx_mail = 3
 
-        if dept_name not in results:
-            results[dept_name] = 0
-        results[dept_name] += 1
+        users_dict = {}
+        for line in csv_lines[1:]:
+            columns = line.split(',')
+            if len(columns) > max(idx_huid, idx_active, idx_name, idx_mail):
+                email = columns[idx_mail].strip().lower()
+                huid = columns[idx_huid].strip()
+                active = columns[idx_active].strip().lower() == "true"
+                name = columns[idx_name].strip()
+                if email and "@" in email:
+                    users_dict[email] = {"huid": huid, "active": active, "name": name}
+        return users_dict
 
-    conn.unbind()
-    return results
+async def get_express_huids_dict() -> dict:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
 
-def get_ad_users_by_dept_sync(dept_name: str) -> list:
-    conn, real_search_base = _get_ad_connection()
-    safe_dept = escape_filter_chars(dept_name)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        csv_url = f"{cts_url}/api/v3/botx/users/users_as_csv"
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"cts_user": "true", "unregistered": "false", "botx": "false"}
+        resp = await client.get(csv_url, headers=headers, params=params)
+        resp.raise_for_status()
 
-    ldap_filter = (
-        f"(&(objectCategory=person)(objectClass=user)"
-        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
-        f"(|(department={safe_dept})(division={safe_dept})"
-        f"(extensionAttribute3={safe_dept})(extensionAttribute4={safe_dept})))"
-    )
+        csv_lines = resp.text.strip().split('\n')
+        if not csv_lines:
+            return {}
 
-    attributes = ['sAMAccountName', 'name', 'employeeType', 'distinguishedName', 'mail']
-    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+        headers = [h.strip().lower() for h in csv_lines[0].split(',')]
+        idx_huid = headers.index("huid") if "huid" in headers else 0
+        idx_active = headers.index("active") if "active" in headers else 6
 
-    users = []
-    for entry in conn.entries:
-        sam = str(entry.sAMAccountName.value).strip().lower() if entry.sAMAccountName else ""
-        name_val = str(entry.name.value) if entry.name else "Неизвестно"
-        dn = str(entry.distinguishedName.value).lower() if entry.distinguishedName else ""
-        emp_type = str(entry.employeeType.value).strip().lower() if entry.employeeType else ""
+        huids_dict = {}
+        for line in csv_lines[1:]:
+            columns = line.split(',')
+            if len(columns) > max(idx_huid, idx_active):
+                huid = columns[idx_huid].strip()
+                active = columns[idx_active].strip().lower() == "true"
+                if huid:
+                    huids_dict[huid] = active
+        return huids_dict
 
-        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
-                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
-                "$" in name_val.lower() or "администратор" in name_val.lower() or "тестовая" in name_val.lower() or
-                "отключенные пользователи" in dn or "сторон" in dn):
-            continue
+async def add_members_to_chat_batch(chat_id: str, huids: list) -> tuple:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
+    success_count = 0
+    error_count = 0
+    error_details = []
+    chunk_size = 500
 
-        mail = str(entry.mail.value).strip().lower() if entry.mail else ""
-        if mail:
-            users.append({"email": mail, "name": name_val})
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        add_url = f"{cts_url}/api/v3/botx/chats/add_user"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        for i in range(0, len(huids), chunk_size):
+            chunk = huids[i:i + chunk_size]
+            payload = {"group_chat_id": chat_id, "user_huids": chunk}
+            try:
+                resp = await client.post(add_url, headers=headers, json=payload)
+                if resp.status_code in (200, 201, 204):
+                    success_count += len(chunk)
+                else:
+                    for h in chunk:
+                        try:
+                            fallback_resp = await client.post(add_url, headers=headers, json={"group_chat_id": chat_id, "user_huids": [h]})
+                            if fallback_resp.status_code in (200, 201, 204): success_count += 1
+                            else: error_count += 1
+                        except Exception: error_count += 1
+                    error_details.append(f"HTTP {resp.status_code} для пачки. Запущен Fallback.")
+            except Exception as e:
+                for h in chunk:
+                    try:
+                        fallback_resp = await client.post(add_url, headers=headers, json={"group_chat_id": chat_id, "user_huids": [h]})
+                        if fallback_resp.status_code in (200, 201, 204): success_count += 1
+                        else: error_count += 1
+                    except Exception: error_count += 1
+                error_details.append(f"Ошибка сети: {str(e)}. Запущен Fallback.")
+    return success_count, error_count, error_details
 
-    conn.unbind()
-    return users
+async def remove_members_from_chat_batch(chat_id: str, huids: list) -> tuple:
+    bot_id_str = str(settings.express.uuid)
+    cts_url = str(settings.express.cts_url).rstrip("/")
+    token = await get_botx_token(bot_id_str, cts_url)
+    success_count = 0
+    error_count = 0
+    error_details = []
+    chunk_size = 100
 
-async def search_ad_departments(search_str: str) -> dict:
-    return await asyncio.to_thread(search_ad_departments_sync, search_str)
-
-async def get_ad_users_by_dept(dept_name: str) -> list:
-    return await asyncio.to_thread(get_ad_users_by_dept_sync, dept_name)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        remove_url = f"{cts_url}/api/v3/botx/chats/remove_user"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        for i in range(0, len(huids), chunk_size):
+            chunk = huids[i:i + chunk_size]
+            payload = {"group_chat_id": chat_id, "user_huids": chunk}
+            try:
+                resp = await client.post(remove_url, headers=headers, json=payload)
+                if resp.status_code == 404:
+                    for h in chunk:
+                        alt_url = f"{cts_url}/api/v3/botx/chats/{chat_id}/members/{h}"
+                        r = await client.delete(alt_url, headers=headers)
+                        if r.status_code in (200, 204): success_count += 1
+                        else: error_count += 1
+                elif resp.status_code in (200, 201, 204):
+                    success_count += len(chunk)
+                else:
+                    error_count += len(chunk)
+                    error_details.append(f"HTTP {resp.status_code} для пачки.")
+            except Exception as e:
+                error_count += len(chunk)
+                error_details.append(f"Ошибка сети: {str(e)}")
+    return success_count, error_count, error_details
