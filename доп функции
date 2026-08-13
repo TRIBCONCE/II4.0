@@ -1,0 +1,30 @@
+def get_user_ad_groups_sync(sam_account_name: str) -> list:
+    """Синхронно вытягивает список групп доступа пользователя из AD."""
+    conn, real_search_base = _get_ad_connection()
+    
+    # Ищем пользователя по логину (sAMAccountName)
+    ldap_filter = f"(&(objectCategory=person)(objectClass=user)(sAMAccountName={escape_filter_chars(sam_account_name)}))"
+    attributes = ['memberOf']
+    
+    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    groups = []
+    if conn.entries:
+        user_entry = conn.entries[0]
+        # Извлекаем группы из атрибута memberOf
+        if hasattr(user_entry, 'memberOf') and user_entry.memberOf:
+            for group_dn in user_entry.memberOf:
+                # AD отдает полное имя (CN=ABC Proxy IT,OU=Groups,DC=abb,DC=ru). 
+                # Нам нужно отрезать всё, кроме самого имени (после CN=)
+                dn_parts = str(group_dn).split(',')
+                if dn_parts and dn_parts[0].startswith("CN="):
+                    groups.append(dn_parts[0][3:])
+                else:
+                    groups.append(str(group_dn))
+                    
+    conn.unbind()
+    return sorted(groups)  # Возвращаем красивый отсортированный по алфавиту список
+
+async def get_user_ad_groups(sam_account_name: str) -> list:
+    """Асинхронная обертка для поиска групп."""
+    return await asyncio.to_thread(get_user_ad_groups_sync, sam_account_name)
