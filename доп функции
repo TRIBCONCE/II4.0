@@ -1,30 +1,56 @@
-def get_user_ad_groups_sync(sam_account_name: str) -> list:
-    """Синхронно вытягивает список групп доступа пользователя из AD."""
+def get_ad_group_members_sync(group_name: str) -> list:
+    """Синхронно вытягивает пользователей конкретной группы и их атрибуты."""
     conn, real_search_base = _get_ad_connection()
-    
-    # Ищем пользователя по логину (sAMAccountName)
-    ldap_filter = f"(&(objectCategory=person)(objectClass=user)(sAMAccountName={escape_filter_chars(sam_account_name)}))"
-    attributes = ['memberOf']
-    
-    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
-    
-    groups = []
-    if conn.entries:
-        user_entry = conn.entries[0]
-        # Извлекаем группы из атрибута memberOf
-        if hasattr(user_entry, 'memberOf') and user_entry.memberOf:
-            for group_dn in user_entry.memberOf:
-                # AD отдает полное имя (CN=ABC Proxy IT,OU=Groups,DC=abb,DC=ru). 
-                # Нам нужно отрезать всё, кроме самого имени (после CN=)
-                dn_parts = str(group_dn).split(',')
-                if dn_parts and dn_parts[0].startswith("CN="):
-                    groups.append(dn_parts[0][3:])
-                else:
-                    groups.append(str(group_dn))
-                    
-    conn.unbind()
-    return sorted(groups)  # Возвращаем красивый отсортированный по алфавиту список
+    safe_group_name = escape_filter_chars(group_name)
 
-async def get_user_ad_groups(sam_account_name: str) -> list:
-    """Асинхронная обертка для поиска групп."""
-    return await asyncio.to_thread(get_user_ad_groups_sync, sam_account_name)
+    # 1. Находим DN самой группы
+    group_filter = f"(&(objectClass=group)(cn={safe_group_name}))"
+    conn.search(search_base=real_search_base, search_filter=group_filter, search_scope=SUBTREE, attributes=['distinguishedName'])
+
+    if not conn.entries:
+        conn.unbind()
+        return []
+
+    group_dn = conn.entries[0].distinguishedName.value
+
+    # 2. Ищем всех пользователей, у которых memberOf равен DN нашей группы
+    user_filter = f"(&(objectCategory=person)(objectClass=user)(memberOf={escape_filter_chars(group_dn)}))"
+    
+    # Запрашиваем все нужные атрибуты
+    attributes = ['name', 'userAccountControl', 'mail', 'department', 'division', 'extensionAttribute1', 'extensionAttribute2']
+
+    conn.search(search_base=real_search_base, search_filter=user_filter, search_scope=SUBTREE, attributes=attributes)
+
+    members = []
+    for entry in conn.entries:
+        name = str(entry.name.value) if hasattr(entry, 'name') and entry.name else "Неизвестно"
+        mail = str(entry.mail.value).lower() if hasattr(entry, 'mail') and entry.mail else ""
+        
+        # Определяем статус (маска 2 в userAccountControl означает, что учетка отключена)
+        uac = int(entry.userAccountControl.value) if hasattr(entry, 'userAccountControl') and entry.userAccountControl else 0
+        is_active = "Отключена" if (uac & 2) else "Активна"
+        
+        # Определяем Блок (ищем в department, если пусто — в division)
+        dept = str(entry.department.value) if hasattr(entry, 'department') and entry.department else ""
+        div = str(entry.division.value) if hasattr(entry, 'division') and entry.division else ""
+        block = div if div else dept
+        
+        # Ext Атрибуты
+        ext1 = str(entry.extensionAttribute1.value) if hasattr(entry, 'extensionAttribute1') and entry.extensionAttribute1 else ""
+        ext2 = str(entry.extensionAttribute2.value) if hasattr(entry, 'extensionAttribute2') and entry.extensionAttribute2 else ""
+        
+        members.append({
+            "name": name,
+            "status": is_active,
+            "mail": mail,
+            "block": block,
+            "ext1": ext1,
+            "ext2": ext2
+        })
+
+    conn.unbind()
+    return members
+
+async def get_ad_group_members(group_name: str) -> list:
+    """Асинхронная обертка для поиска участников группы."""
+    return await asyncio.to_thread(get_ad_group_members_sync, group_name)
