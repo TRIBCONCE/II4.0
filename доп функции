@@ -1,5 +1,170 @@
+# src/services/ad_service.py
+
+import asyncio
+import ssl
+from ldap3 import Server, Connection, ALL, SUBTREE, Tls
+from ldap3.utils.conv import escape_filter_chars
+
+# TODO: Вставь сюда данные сервисной учетки
+LDAP_USER = "ABB-WIN\\z-BorodinES"
+LDAP_PASSWORD = "скрвл"
+LDAP_SEARCH_BASE = "DC=abb-win,DC=ru"
+
+def _get_ad_connection():
+    tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = Server("abb-win.akbars.ru", port=636, use_ssl=True, get_info=ALL, tls=tls_config)
+    conn = Connection(server, user=LDAP_USER, password=LDAP_PASSWORD, auto_bind=True, auto_referrals=False)
+
+    try:
+        real_search_base = server.info.other.get('defaultNamingContext')[0]
+    except Exception:
+        real_search_base = "DC=abb-win,DC=akbars,DC=ru"
+
+    return conn, real_search_base
+
+
+def _get_attr_value(attrs_dict: dict, key: str, default: str = "") -> str:
+    """Удобная функция для извлечения значений из сырого словаря paged_search"""
+    val = attrs_dict.get(key)
+    if not val:
+        return default
+    if isinstance(val, list) and len(val) > 0:
+        return str(val[0]).strip()
+    elif isinstance(val, list):
+        return default
+    return str(val).strip()
+
+
+def search_ad_departments_sync(search_str: str) -> dict:
+    conn, real_search_base = _get_ad_connection()
+    search_str = search_str.lower()
+
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department=*{search_str}*)(division=*{search_str}*)"
+        f"(extensionAttribute3=*{search_str}*)(extensionAttribute4=*{search_str}*)))"
+    )
+
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'department', 'division', 'extensionAttribute3', 'extensionAttribute4', 'distinguishedName']
+    
+    # 🌟 Используем paged_search для обхода лимита в 1000 пользователей
+    entries = conn.extend.standard.paged_search(
+        search_base=real_search_base, 
+        search_filter=ldap_filter, 
+        search_scope=SUBTREE, 
+        attributes=attributes,
+        paged_size=900,
+        generator=False
+    )
+    
+    results = {}
+
+    for entry in entries:
+        if entry.get('type') != 'searchResEntry':
+            continue
+            
+        attrs = entry.get('attributes', {})
+        
+        sam = _get_attr_value(attrs, 'sAMAccountName').lower()
+        name = _get_attr_value(attrs, 'name').lower()
+        dn = _get_attr_value(attrs, 'distinguishedName').lower()
+        emp_type = _get_attr_value(attrs, 'employeeType').lower()
+
+        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
+                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+                "$" in name or "администратор" in name or "тестовая" in name or
+                "отключенные пользователи" in dn or "сторон" in dn):
+            continue
+
+        dept_name = "Неизвестное подразделение"
+        for attr in ['department', 'division', 'extensionAttribute3', 'extensionAttribute4']:
+            val = _get_attr_value(attrs, attr)
+            if val and search_str in val.lower():
+                dept_name = val
+                break
+
+        if dept_name not in results:
+            results[dept_name] = 0
+        results[dept_name] += 1
+
+    conn.unbind()
+    return results
+
+
+def get_ad_users_by_dept_sync(dept_name: str) -> list:
+    conn, real_search_base = _get_ad_connection()
+    safe_dept = escape_filter_chars(dept_name)
+
+    ldap_filter = (
+        f"(&(objectCategory=person)(objectClass=user)"
+        f"(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        f"(|(department={safe_dept})(division={safe_dept})"
+        f"(extensionAttribute3={safe_dept})(extensionAttribute4={safe_dept})))"
+    )
+
+    attributes = ['sAMAccountName', 'name', 'employeeType', 'distinguishedName', 'mail']
+    
+    # 🌟 Используем paged_search
+    entries = conn.extend.standard.paged_search(
+        search_base=real_search_base, 
+        search_filter=ldap_filter, 
+        search_scope=SUBTREE, 
+        attributes=attributes,
+        paged_size=900,
+        generator=False
+    )
+
+    users = []
+    for entry in entries:
+        if entry.get('type') != 'searchResEntry':
+            continue
+            
+        attrs = entry.get('attributes', {})
+        
+        sam = _get_attr_value(attrs, 'sAMAccountName').lower()
+        name_val = _get_attr_value(attrs, 'name', "Неизвестно")
+        dn = _get_attr_value(attrs, 'distinguishedName').lower()
+        emp_type = _get_attr_value(attrs, 'employeeType').lower()
+
+        if (emp_type in ["service", "vendor"] or sam.startswith("health") or sam.startswith("audit") or
+                sam.startswith("esas") or sam.startswith("a-") or sam.startswith("z-") or
+                "$" in name_val.lower() or "администратор" in name_val.lower() or "тестовая" in name_val.lower() or
+                "отключенные пользователи" in dn or "сторон" in dn):
+            continue
+
+        mail = _get_attr_value(attrs, 'mail').lower()
+        if mail:
+            users.append({"email": mail, "name": name_val})
+
+    conn.unbind()
+    return users
+
+
+def get_user_ad_groups_sync(sam_account_name: str) -> list:
+    conn, real_search_base = _get_ad_connection()
+    ldap_filter = f"(&(objectCategory=person)(objectClass=user)(sAMAccountName={escape_filter_chars(sam_account_name)}))"
+    attributes = ['memberOf']
+    
+    conn.search(search_base=real_search_base, search_filter=ldap_filter, search_scope=SUBTREE, attributes=attributes)
+    
+    groups = []
+    if conn.entries:
+        user_entry = conn.entries[0]
+        if hasattr(user_entry, 'memberOf') and user_entry.memberOf:
+            for group_dn in user_entry.memberOf:
+                dn_parts = str(group_dn).split(',')
+                if dn_parts and dn_parts[0].startswith("CN="):
+                    groups.append(dn_parts[0][3:])
+                else:
+                    groups.append(str(group_dn))
+                    
+    conn.unbind()
+    return sorted(groups)
+
+
 def get_ad_group_members_sync(group_name: str) -> list:
-    """Синхронно вытягивает пользователей конкретной группы и их атрибуты."""
+    """🌟 Мощный алгоритм с пагинацией: вытаскивает все атрибуты для ВСЕХ пользователей группы, даже если их 10 000"""
     conn, real_search_base = _get_ad_connection()
     safe_group_name = escape_filter_chars(group_name)
 
@@ -13,32 +178,43 @@ def get_ad_group_members_sync(group_name: str) -> list:
 
     group_dn = conn.entries[0].distinguishedName.value
 
-    # 2. Ищем всех пользователей, у которых memberOf равен DN нашей группы
+    # 2. Ищем пользователей через пагинацию (обход лимита AD в 1000 человек)
     user_filter = f"(&(objectCategory=person)(objectClass=user)(memberOf={escape_filter_chars(group_dn)}))"
-    
-    # Запрашиваем все нужные атрибуты
     attributes = ['name', 'userAccountControl', 'mail', 'department', 'division', 'extensionAttribute1', 'extensionAttribute2']
 
-    conn.search(search_base=real_search_base, search_filter=user_filter, search_scope=SUBTREE, attributes=attributes)
+    # Механизм постраничной выгрузки: скачивает пачками по 900 пользователей
+    entries = conn.extend.standard.paged_search(
+        search_base=real_search_base,
+        search_filter=user_filter,
+        search_scope=SUBTREE,
+        attributes=attributes,
+        paged_size=900,
+        generator=False
+    )
 
     members = []
-    for entry in conn.entries:
-        name = str(entry.name.value) if hasattr(entry, 'name') and entry.name else "Неизвестно"
-        mail = str(entry.mail.value).lower() if hasattr(entry, 'mail') and entry.mail else ""
+    for entry in entries:
+        if entry.get('type') != 'searchResEntry':
+            continue
+            
+        attrs = entry.get('attributes', {})
+
+        name = _get_attr_value(attrs, 'name', "Неизвестно")
+        mail = _get_attr_value(attrs, 'mail', "").lower()
         
-        # Определяем статус (маска 2 в userAccountControl означает, что учетка отключена)
-        uac = int(entry.userAccountControl.value) if hasattr(entry, 'userAccountControl') and entry.userAccountControl else 0
+        # Определяем статус: маска 2 в userAccountControl означает "Account Disabled"
+        uac_str = _get_attr_value(attrs, 'userAccountControl', "0")
+        uac = int(uac_str) if uac_str.isdigit() else 0
         is_active = "Отключена" if (uac & 2) else "Активна"
         
-        # Определяем Блок (ищем в department, если пусто — в division)
-        dept = str(entry.department.value) if hasattr(entry, 'department') and entry.department else ""
-        div = str(entry.division.value) if hasattr(entry, 'division') and entry.division else ""
+        # Блок
+        dept = _get_attr_value(attrs, 'department', "")
+        div = _get_attr_value(attrs, 'division', "")
         block = div if div else dept
         
-        # Ext Атрибуты
-        ext1 = str(entry.extensionAttribute1.value) if hasattr(entry, 'extensionAttribute1') and entry.extensionAttribute1 else ""
-        ext2 = str(entry.extensionAttribute2.value) if hasattr(entry, 'extensionAttribute2') and entry.extensionAttribute2 else ""
-        
+        ext1 = _get_attr_value(attrs, 'extensionAttribute1', "")
+        ext2 = _get_attr_value(attrs, 'extensionAttribute2', "")
+
         members.append({
             "name": name,
             "status": is_active,
@@ -51,6 +227,15 @@ def get_ad_group_members_sync(group_name: str) -> list:
     conn.unbind()
     return members
 
+
+async def search_ad_departments(search_str: str) -> dict:
+    return await asyncio.to_thread(search_ad_departments_sync, search_str)
+
+async def get_ad_users_by_dept(dept_name: str) -> list:
+    return await asyncio.to_thread(get_ad_users_by_dept_sync, dept_name)
+
+async def get_user_ad_groups(sam_account_name: str) -> list:
+    return await asyncio.to_thread(get_user_ad_groups_sync, sam_account_name)
+
 async def get_ad_group_members(group_name: str) -> list:
-    """Асинхронная обертка для поиска участников группы."""
     return await asyncio.to_thread(get_ad_group_members_sync, group_name)
