@@ -1,3 +1,5 @@
+# 🌟 Ставим openpyxl напрямую через pip с указанием корпоративного индекса
+RUN pip3 install openpyxl==3.1.2 --index-url https://artifactory.akbars.tech/artifactory/api/pypi/pypi/simple
 # 🌟 ─── ШАГ: ЗАПРОС СПИСКА ГРУППЫ (ВВОД ИМЕНИ И ГЕНЕРАЦИЯ EXCEL) ─── 🌟
     elif current_state == "WAIT_FOR_GROUP_NAME":
         if msg_text == "/group_choice_no":
