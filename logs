@@ -4,3 +4,15 @@
   File "/app/src/handlers/testhandlers.py", line 8, in <module>
     import openpyxl
 ModuleNotFoundError: No module named 'openpyxl'
+
+z-borodines@P-msg-bot02:~/dev/Bot_invite_v2$ sudo docker build --no-cache -t invite-v2-bot
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+"docker build" requires exactly 1 argument.
+See 'docker build --help'.
+
+Usage:  docker build [OPTIONS] PATH | URL | -
+
+Build an image from a Dockerfile
