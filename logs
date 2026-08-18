@@ -1,7 +1,4 @@
-z-borodines@P-msg-bot02:~/dev/Bot_invite_v2$ cd dev
--bash: cd: dev: Нет такого файла или каталога
-z-borodines@P-msg-bot02:~/dev/Bot_invite_v2$ poetry lock
--bash: poetry: команда не найдена
+z-borodines@P-msg-bot02:~/dev/Bot_invite_v2$ rm poetry.lock
 z-borodines@P-msg-bot02:~/dev/Bot_invite_v2$ sudo docker builder prune -f
 DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
             Install the buildx component to build images with BuildKit:
