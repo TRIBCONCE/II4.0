@@ -1,78 +1,69 @@
-# 🌟 Ставим openpyxl напрямую через pip с указанием корпоративного индекса
-RUN pip3 install openpyxl==3.1.2 --index-url https://artifactory.akbars.tech/artifactory/api/pypi/pypi/simple
-# 🌟 ─── ШАГ: ЗАПРОС СПИСКА ГРУППЫ (ВВОД ИМЕНИ И ГЕНЕРАЦИЯ EXCEL) ─── 🌟
-    elif current_state == "WAIT_FOR_GROUP_NAME":
-        if msg_text == "/group_choice_no":
+# 🌟 ─── ШАГ: ЗАПРОС ЛЮБОЙ ГРУППЫ АДМИНОМ ─── 🌟
+    elif current_state == "WAIT_FOR_ADMIN_GROUP_NAME":
+        if msg_text == "/cancel_admin_export":
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-            await bot.answer_message(body="Действие отменено.", bubbles=get_main_menu_markup())
+            await bot.answer_message(body="Операция отменена.", bubbles=get_main_menu_markup())
             return
             
         group_name = msg_text.strip()
-        user_groups = user_data.get("ad_groups", [])
-        
-        matched_group = next((g for g in user_groups if g.lower() == group_name.lower()), None)
-        
-        if not matched_group:
-            markup = BubbleMarkup()
-            markup.add_button(command="/group_choice_no", label="Отмена")
-            await bot.answer_message(
-                body="❌ У вас нет доступа к такой группе. Проверьте правильность написания и попробуйте еще раз:", 
-                bubbles=markup
-            )
-            return
-            
-        await bot.answer_message(f"⏳ Собираю участников группы **{matched_group}**, формирую Excel-файл...")
+        await bot.answer_message(f"⏳ Ищу группу **{group_name}** и собираю данные...")
         
         try:
-            members = await get_ad_group_members(matched_group)
+            members = await get_ad_group_members(group_name)
             
+            # 1. Если вернулся None, значит группы нет в AD
+            if members is None:
+                markup = BubbleMarkup()
+                markup.add_button(command="/cancel_admin_export", label="Отмена")
+                await bot.answer_message(
+                    body=f"❌ Группа **{group_name}** не найдена в AD!\n\nПроверьте правильность написания и введите название заново, либо нажмите «Отмена»:", 
+                    bubbles=markup
+                )
+                return
+                
+            # 2. Если вернулся [], значит группа есть, но она пустая
             if not members:
                 USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
-                await bot.answer_message("В этой группе пока нет пользователей.", bubbles=get_main_menu_markup())
+                await bot.answer_message(f"Группа найдена, но в ней пока нет пользователей.", bubbles=get_main_menu_markup())
                 return
             
-            # 🌟 МАГИЯ EXCEL С АВТОШИРИНОЙ 🌟
+            # 3. Генерируем красивый Excel
             import openpyxl
             from openpyxl.utils import get_column_letter
+            from openpyxl.styles import Font
             import io
             import base64
             
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Участники группы"
+            ws.freeze_panes = "A2"
             
-            # Заголовки с нужным порядком
             headers = [
                 "ФИО", "Логин", "Должность", "Статус", "Почта", "Блок", 
                 "Ext Атрибут 1", "Ext Атрибут 2", "Ext Атрибут 3", 
                 "Ext Атрибут 4", "Ext Атрибут 5", "Ext Атрибут 6"
             ]
             ws.append(headers)
+            for cell in ws[1]: cell.font = Font(bold=True)
             
-            # Заполняем строки
-            for m in members:
-                ws.append([
-                    m["name"], m["login"], m["title"], m["status"], m["mail"], m["block"],
-                    m["ext1"], m["ext2"], m["ext3"], m["ext4"], m["ext5"], m["ext6"]
-                ])
-                
-            # Проходимся по всем колонкам и устанавливаем ширину по самому длинному тексту
-            for col in ws.columns:
-                max_length = 0
-                column_letter = get_column_letter(col[0].column)
-                for cell in col:
-                    if cell.value:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                # Добавляем небольшой отступ (+2) для красоты
-                ws.column_dimensions[column_letter].width = max_length + 2
+            col_widths = [len(h) for h in headers]
             
-            # Сохраняем книгу в память
+            for row in members:
+                ws.append(row)
+                for idx, val in enumerate(row):
+                    if val:
+                        val_len = len(str(val))
+                        if val_len > col_widths[idx]: col_widths[idx] = val_len
+            
+            for idx, width in enumerate(col_widths, start=1):
+                col_letter = get_column_letter(idx)
+                ws.column_dimensions[col_letter].width = min(max(width + 3, 12), 50)
+            
             output_file = io.BytesIO()
             wb.save(output_file)
             xlsx_bytes = output_file.getvalue()
             
-            # Кодируем для отправки
             b64_content = base64.b64encode(xlsx_bytes).decode('utf-8')
             mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             data_uri = f"data:{mime_type};base64,{b64_content}"
@@ -83,12 +74,12 @@ RUN pip3 install openpyxl==3.1.2 --index-url https://artifactory.akbars.tech/art
                     self.content = raw_bytes
                     self.data_uri = self.url = uri
 
-            safe_group_filename = "".join(c for c in matched_group if c.isalnum() or c in " -_").strip()
+            safe_group_filename = "".join(c for c in group_name if c.isalnum() or c in " -_").strip()
             my_file = MagicFile(f"users_{safe_group_filename}.xlsx", xlsx_bytes, data_uri)
 
             USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
             await bot.answer_message(
-                body=f"✅ Готово! Найдено {len(members)} участников.\n\nВыберите следующее действие:", 
+                body=f"✅ Готово! Найдено {len(members)} участников в группе **{group_name}**.\n\nВыберите следующее действие:", 
                 file=my_file,
                 bubbles=get_main_menu_markup()
             )
