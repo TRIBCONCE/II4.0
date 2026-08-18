@@ -1,14 +1,21 @@
-@collector.command("/admin_export_group", visible=False)
-async def admin_export_group_handler(message: IncomingMessage, bot: Bot) -> None:
-    user_huid = str(message.sender.huid)
-    if not await check_auth(user_huid, bot): return
+# Заполняем строки данными и считаем ширину колонок
+            for m in members:
+                # Универсальная проверка: если данные пришли в виде словаря — превращаем в список
+                if isinstance(m, dict):
+                    row_data = [
+                        m.get("name", ""), m.get("login", ""), m.get("title", ""), 
+                        m.get("status", ""), m.get("mail", ""), m.get("block", ""),
+                        m.get("ext1", ""), m.get("ext2", ""), m.get("ext3", ""), 
+                        m.get("ext4", ""), m.get("ext5", ""), m.get("ext6", "")
+                    ]
+                else:
+                    row_data = m
 
-    USER_STATES[user_huid]["state"] = "WAIT_FOR_ADMIN_GROUP_NAME"
-    
-    markup = BubbleMarkup()
-    markup.add_button(command="/cancel_admin_export", label="Отмена")
-    
-    await bot.answer_message(
-        body="Введите точное название AD-группы для выгрузки (поиск по всему банку):",
-        bubbles=markup
-    )
+                ws.append(row_data)
+                
+                # Расчет автоширины
+                for idx, val in enumerate(row_data):
+                    if val:
+                        val_len = len(str(val))
+                        if val_len > col_widths[idx]: 
+                            col_widths[idx] = val_len
