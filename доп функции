@@ -1,24 +1,69 @@
-# ─── ШАГ 0: АВТОРИЗАЦИЯ ───
-    if current_state == "WAIT_FOR_PASSWORD":
-        CORRECT_PASSWORD = os.getenv("BOT_PASSWORD", "secret")
-        
-        # 🌟 БЕЗОПАСНОСТЬ: Сразу же удаляем сообщение пользователя с паролем
-        try:
-            # Пытаемся удалить по ID сообщения
-            await bot.delete_message(sync_id=message.sync_id)
-        except Exception:
-            # Если сервер eXpress запрещает боту удалять чужие сообщения в личке, 
-            # мы просто игнорируем ошибку, чтобы бот не сломался
-            pass
+def get_ad_group_members_sync(group_name: str) -> list:
+    """🌟 Мощный алгоритм: вытаскивает расширенные атрибуты для ВСЕХ пользователей группы"""
+    conn, real_search_base = _get_ad_connection()
+    safe_group_name = escape_filter_chars(group_name)
 
-        if msg_text == CORRECT_PASSWORD:
-            USER_STATES[user_huid]["authenticated"] = True
-            USER_STATES[user_huid]["state"] = "WAIT_FOR_ACTION"
+    group_filter = f"(&(objectClass=group)(cn={safe_group_name}))"
+    conn.search(search_base=real_search_base, search_filter=group_filter, search_scope=SUBTREE, attributes=['distinguishedName'])
+
+    if not conn.entries:
+        conn.unbind()
+        return []
+
+    group_dn = conn.entries[0].distinguishedName.value
+
+    user_filter = f"(&(objectCategory=person)(objectClass=user)(memberOf={escape_filter_chars(group_dn)}))"
+    
+    # 🌟 Добавили title (Должность), sAMAccountName (Логин) и расширили Ext атрибуты до 6
+    attributes = [
+        'name', 'sAMAccountName', 'title', 'userAccountControl', 'mail', 'department', 'division', 
+        'extensionAttribute1', 'extensionAttribute2', 'extensionAttribute3', 
+        'extensionAttribute4', 'extensionAttribute5', 'extensionAttribute6'
+    ]
+
+    entries = conn.extend.standard.paged_search(
+        search_base=real_search_base,
+        search_filter=user_filter,
+        search_scope=SUBTREE,
+        attributes=attributes,
+        paged_size=900,
+        generator=False
+    )
+
+    members = []
+    for entry in entries:
+        if entry.get('type') != 'searchResEntry':
+            continue
             
-            await bot.answer_message(
-                body="✅ Доступ разрешен!\n\nВыберите действие в меню:",
-                bubbles=get_main_menu_markup()
-            )
-        else:
-            await bot.answer_message("❌ Неверный пароль. Попробуйте еще раз:")
-        return
+        attrs = entry.get('attributes', {})
+
+        name = _get_attr_value(attrs, 'name', "Неизвестно")
+        login = _get_attr_value(attrs, 'sAMAccountName', "").lower()
+        title = _get_attr_value(attrs, 'title', "")
+        mail = _get_attr_value(attrs, 'mail', "").lower()
+        
+        uac_str = _get_attr_value(attrs, 'userAccountControl', "0")
+        uac = int(uac_str) if uac_str.isdigit() else 0
+        is_active = "Отключена" if (uac & 2) else "Активна"
+        
+        dept = _get_attr_value(attrs, 'department', "")
+        div = _get_attr_value(attrs, 'division', "")
+        block = div if div else dept
+        
+        members.append({
+            "name": name,
+            "login": login,
+            "title": title,
+            "status": is_active,
+            "mail": mail,
+            "block": block,
+            "ext1": _get_attr_value(attrs, 'extensionAttribute1', ""),
+            "ext2": _get_attr_value(attrs, 'extensionAttribute2', ""),
+            "ext3": _get_attr_value(attrs, 'extensionAttribute3', ""),
+            "ext4": _get_attr_value(attrs, 'extensionAttribute4', ""),
+            "ext5": _get_attr_value(attrs, 'extensionAttribute5', ""),
+            "ext6": _get_attr_value(attrs, 'extensionAttribute6', "")
+        })
+
+    conn.unbind()
+    return members
