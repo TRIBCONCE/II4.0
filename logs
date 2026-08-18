@@ -1,4 +1,6 @@
- Читаю файл и сверяю HUID с базой eXpress...
-10:23
-Bot invite v2
- В файле не найдена обязательная колонка huid (или файл пуст).
+    from bot import create_bot
+  File "/app/src/bot.py", line 9, in <module>
+    from handlers import testhandlers
+  File "/app/src/handlers/testhandlers.py", line 8, in <module>
+    import openpyxl
+ModuleNotFoundError: No module named 'openpyxl'
